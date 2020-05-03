@@ -6,10 +6,61 @@
 
 #pragma once
 
-#include "orders.h"
+// ORDERS BEGIN
+
+#include <type_traits>
+#include <cstdint>
+
+#if defined(_MSC_VER)
+
+  #include <stdlib.h>
+  #define COMMON_LITTLE_ENDIAN 1
+  
+  #define bswap_16(x) _byteswap_ushort(x)
+  #define bswap_32(x) _byteswap_ulong(x)
+  #define bswap_64(x) _byteswap_uint64(x)
+
+#elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+
+  #define COMMON_LITTLE_ENDIAN 1
+  
+  #define bswap_16(x) __builtin_bswap16(x)
+  #define bswap_32(x) __builtin_bswap32(x)
+  #define bswap_64(x) __builtin_bswap64(x)
+
+#elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+
+  #define COMMON_LITTLE_ENDIAN 0
+  
+  #define bswap_16(x) __builtin_bswap16(x)
+  #define bswap_32(x) __builtin_bswap32(x)
+  #define bswap_64(x) __builtin_bswap64(x)
+
+#else
+
+  #error "Unsupported platform endian detection"
+
+#endif
+
+namespace orders {
+
+  // network -> host
+  template <typename T> inline std::enable_if_t<sizeof(T) == 1, T> ntohT (const T& value) { return value; }
+  template <typename T> inline std::enable_if_t<sizeof(T) == 2, T> ntohT (const T& value) { return (COMMON_LITTLE_ENDIAN) ? bswap_16(value) : value; }
+  template <typename T> inline std::enable_if_t<sizeof(T) == 4, T> ntohT (const T& value) { return (COMMON_LITTLE_ENDIAN) ? bswap_32(value) : value; }
+  template <typename T> inline std::enable_if_t<sizeof(T) == 8, T> ntohT (const T& value) { return (COMMON_LITTLE_ENDIAN) ? bswap_64(value) : value; }
+
+  // host -> network
+  template <typename T> inline std::enable_if_t<sizeof(T) == 1, T> htonT (const T& value) { return value; }
+  template <typename T> inline std::enable_if_t<sizeof(T) == 2, T> htonT (const T& value) { return (COMMON_LITTLE_ENDIAN) ? bswap_16(value) : value; }
+  template <typename T> inline std::enable_if_t<sizeof(T) == 4, T> htonT (const T& value) { return (COMMON_LITTLE_ENDIAN) ? bswap_32(value) : value; }
+  template <typename T> inline std::enable_if_t<sizeof(T) == 8, T> htonT (const T& value) { return (COMMON_LITTLE_ENDIAN) ? bswap_64(value) : value; }
+
+} // namespace common
+
+// ORDERS END
 
 #include <array>
-#include <cstdint>
 #include <iostream>
 #include <string>
 #include <cassert>
@@ -27,6 +78,19 @@
 // struct ip_address_holder_t {
 //   ip_t<type> ip_address;
 // };
+//
+// also, this universal form allows reverse type deduction and determining, for example, the ip address type:
+// template <ip_type_e type>
+// struct ip_detector;
+// template <>
+// ip_detector<ip_t<v4>> {
+//   static inline const char* type() { return "ipv4"; }
+// }
+// ip_detector<ip_t<v6>> {
+//   static inline const char* type() { return "ipv6"; }
+// }
+// template <class Ip>
+// void print_type () { std::cout << ip_detector<Ip>::type(); }
 
 struct ip4_t : public std::array<uint8_t, 4> {
   // "192.168.2.1"
@@ -107,7 +171,7 @@ struct ip4_t : public std::array<uint8_t, 4> {
       }
     }
     else
-      *((uint32_t*)this) = htonT (accum);
+      *((uint32_t*)this) = orders::htonT (accum);
 
     if (success)
       *success = (state != error);
@@ -142,11 +206,11 @@ struct ip4_t : public std::array<uint8_t, 4> {
   }
 
   ip4_t (const uint32_t& value) {
-    *((uint32_t*)this) = htonT (value);
+    *((uint32_t*)this) = orders::htonT (value);
   }
 
   ip4_t (uint32_t&& value) {
-    *((uint32_t*)this) = htonT (value);
+    *((uint32_t*)this) = orders::htonT (value);
   }
 
   ip4_t (uint8_t&& v1, uint8_t&& v2, uint8_t&& v3, uint8_t&& v4) {
@@ -195,7 +259,7 @@ struct ip4_t : public std::array<uint8_t, 4> {
   }
 
   operator uint32_t () const {
-    return ntohT (*((uint32_t*)this));
+    return orders::ntohT (*((uint32_t*)this));
   }
 };
 
@@ -305,13 +369,13 @@ struct ip6_t : public std::array<uint8_t, 16> {
       separator = 0;
 
     for (; current < separator; current++)
-      ((uint16_t*)this)[current] = htonT (result_hex[current]);
+      ((uint16_t*)this)[current] = orders::htonT (result_hex[current]);
 
     for (; current < separator + (8 - index_hex); current++)
       ((uint16_t*)this)[current] = 0x0000;
 
     for (; current < 8; current++)
-      ((uint16_t*)this)[current] = htonT (result_hex[current - (8 - index_hex)]);
+      ((uint16_t*)this)[current] = orders::htonT (result_hex[current - (8 - index_hex)]);
 
     if (success)
       *success = true;
@@ -467,6 +531,239 @@ struct ip_t_<v6> {
 
 template <ip_type_e type>
 using ip_t = typename ip_t_<type>::type;
+
+// addr_t
+
+struct addr4_t {
+
+  ip4_t    ip   = {};
+  uint16_t port = 0; // le
+
+  // nnn.nnn.nnn.nnn:ppppp
+  // any_format_supported_by_ip4_t_class:ppppp
+  addr4_t& from_str (const char* value, size_t length = 21, bool* success = nullptr) {
+
+    size_t      ip_length = 0;
+    const char* ptr     = value;
+    size_t      accum   = 0;
+
+    while (*ptr && length--) {
+      if (ip_length == 0) {
+        if (*ptr == ':')
+          ip_length = ptr - value;
+        else if ((*ptr < '0' || '9' < *ptr) && (*ptr < 'a' || 'f' < *ptr) && (*ptr < 'A' || 'F' < *ptr) && *ptr != 'x' && *ptr != '.')
+          break; // this is error, break
+      }
+      else {
+        if ('0' <= *ptr && *ptr <= '9')
+          accum = accum * 10 + (*ptr - '0');
+        else
+          break;
+      }
+      ptr++;
+    }
+
+    ip.from_str (value, ip_length, success);
+
+    if (ip_length == 0 || accum == 0 || accum > 0xffff) {
+      if (success)
+        *success = false;
+      *this = {};
+    }
+    else    
+      port = (uint16_t)accum;
+
+    return *this;
+
+  }
+
+  addr4_t () = default;
+
+  addr4_t (const ip4_t& ip_, uint16_t port_) : ip (ip_), port (port_) {}
+
+  template <size_t Size>
+  addr4_t (char (&&value)[Size]) {
+    from_str (value, Size);
+  }
+
+  addr4_t (const char* value) {
+    from_str (value);
+  }
+
+  addr4_t (const char* value, size_t length) {
+    from_str (value, length);
+  }
+
+  addr4_t (const std::string& value) {
+    from_str (value.data (), value.size ());
+  }
+
+  template <size_t Size>
+  addr4_t (const std::array<uint8_t, Size>& value) {
+    from_str (value.data(), Size);
+  }
+
+  std::string to_str () const {
+    return ip.to_str() + ':' + std::to_string (port);
+  }
+
+  operator std::string () const {
+    return to_str ();
+  }
+
+  operator bool () const {
+    return (ip && port != 0);
+  }
+
+  bool operator== (const addr4_t& other_addr) const {
+    return this->ip == other_addr.ip && this->port == other_addr.port;
+  }
+
+};
+
+static inline std::ostream& operator<< (std::ostream& os, const addr4_t& addr4) {
+  os << addr4.to_str ();
+  return os;
+}
+
+struct addr6_t {
+
+  ip6_t    ip;
+  uint16_t port; // le
+
+  // [xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:nnn.nnn.nnn.nnn]:ppppp
+  // [any_format_supported_by_ip6_t_class]:ppppp
+  addr6_t& from_str (const char* value, size_t length = 53, bool* success = nullptr) {
+
+    enum { open, ipp, close, tochki, portt, error, end } state = open;
+    const char* ip_ptr    = nullptr;
+    size_t      ip_length = 0;
+    const char* ptr       = value;
+    size_t      accum     = 0;
+
+    while (*ptr && length-- && state != error) {
+      switch (state) {
+        case open:
+          if (*ptr == '[') {
+            ip_ptr = ptr + 1;
+            state  = ipp;
+          }
+          else
+            state = error;
+        break;
+        case ipp:
+          if (*ptr == ']') {
+            ip_length = ptr - ip_ptr;
+            if (ip_length >= 2)
+              state = close;
+            else
+              state = error;
+          }
+          else if ((*ptr < '0' || '9' < *ptr) && (*ptr < 'a' || 'f' < *ptr) && (*ptr < 'A' || 'F' < *ptr) && *ptr != ':' && *ptr != '.')
+            state = error;
+        break;
+        case close:
+          if (*ptr == ':')
+            state  = portt;
+          else
+            state = error;
+        break;
+        case portt:
+          if ('0' <= *ptr && *ptr <= '9')
+            accum = accum * 10 + (*ptr - '0');
+          else if (accum != 0)
+            state = end;
+          else
+            state = error;
+        break;
+        default:
+        break;
+      }
+      ptr++;
+    }
+
+    if (state != error)
+      ip.from_str (ip_ptr, ip_length, success);
+
+    if (state == error || accum > 0xffff) {
+      if (success)
+        *success = false;
+      *this = {};
+    }
+    else
+      port = (uint16_t)accum;
+
+    return *this;
+
+  }
+
+  addr6_t () = default;
+
+  addr6_t (const ip6_t& ip_, uint16_t port_) : ip (ip_), port (port_) {}
+
+  template <size_t Size>
+  addr6_t (char (&&value)[Size]) {
+    from_str (value, Size);
+  }
+
+  addr6_t (const char* value) {
+    from_str (value);
+  }
+
+  addr6_t (const char* value, size_t length) {
+    from_str (value, length);
+  }
+
+  addr6_t (const std::string& value) {
+    from_str (value.data (), value.size ());
+  }
+
+  template <size_t Size>
+  addr6_t (const std::array<uint8_t, Size>& value) {
+    from_str (value.data (), Size);
+  }
+
+  std::string to_str (bool reduction = true, bool embedded_ipv4 = false) const {
+    return std::string ("[") + ip.to_str (reduction, embedded_ipv4) + std::string ("]:") + std::to_string (port);
+  }
+
+  operator std::string () const {
+    return to_str ();
+  }
+
+  operator bool () const {
+    return (ip && port != 0);
+  }
+
+  bool operator== (const addr6_t& other_addr) const {
+    return this->ip == other_addr.ip && this->port == other_addr.port;
+  }
+
+};
+
+static inline std::ostream& operator<< (std::ostream& os, const addr6_t& addr6) {
+  os << addr6.to_str ();
+  return os;
+}
+
+template <ip_type_e type>
+struct addr_t_;
+
+template <>
+struct addr_t_<v4> {
+  using type = addr4_t;
+};
+
+template <>
+struct addr_t_<v6> {
+  using type = addr6_t;
+};
+
+template <ip_type_e type>
+using addr_t = typename addr_t_<type>::type;
+
+
+
 
 // here is a lot of theory about IPv6 addresses
 // and different ways of packing ipv4 addresses into ipv6 addresses
