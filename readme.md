@@ -16,6 +16,7 @@ The library is designed to be simple, dependency-free, and easy to integrate int
 - Native storage using `std::array<>`
 - IPv4-over-IPv6 mapping
 - Network prefix handling and masking
+- Address + port types (`addr4_t`, `addr6_t`)
 - Rich constructors and implicit/explicit conversions
 - Bitwise operations and comparisons
 

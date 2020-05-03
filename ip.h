@@ -1,6 +1,8 @@
 
 /*
- * Copyright (c) 2020 biaks ianiskr@gmail.com
+ * ip-sockets-cpp-lite — header-only C++ networking utilities
+ * 
+ * Copyright (c) 2020 biaks
  * Licensed under the MIT License
  */
 
@@ -13,7 +15,6 @@
 #include <iostream>
 #include <string>
 #include <cassert>
-
 
 struct ip4_t : public std::array<uint8_t, 4> {
   // "192.168.2.1"
@@ -43,22 +44,22 @@ struct ip4_t : public std::array<uint8_t, 4> {
           state   = dec;
       }
 
-        if (state == dec) {
-          if ('0' <= *value && *value <= '9')
-            accum = accum * 10 + (*value - '0');
-          else if (*value == '.')
-            state = cont;
-          else
-            state = error;
-        }
-        else if (state == hex) {
-          if      ('0' <= *value && *value <= '9') accum = (accum << 4) + (     *value - '0');
-          else if ('a' <= *value && *value <= 'f') accum = (accum << 4) + (10 + *value - 'a');
-          else if ('A' <= *value && *value <= 'F') accum = (accum << 4) + (10 + *value - 'A');
-          else if (*value == '.')
-            state = cont;
-          else
-            state = error;
+      if (state == dec) {
+        if ('0' <= *value && *value <= '9')
+          accum = accum * 10 + (*value - '0');
+        else if (*value == '.')
+          state = cont;
+        else
+          state = error;
+      }
+      else if (state == hex) {
+        if      ('0' <= *value && *value <= '9') accum = (accum << 4) + (     *value - '0');
+        else if ('a' <= *value && *value <= 'f') accum = (accum << 4) + (10 + *value - 'a');
+        else if ('A' <= *value && *value <= 'F') accum = (accum << 4) + (10 + *value - 'A');
+        else if (*value == '.')
+          state = cont;
+        else
+          state = error;
       }
 
       if (state == cont) {
@@ -110,10 +111,11 @@ struct ip4_t : public std::array<uint8_t, 4> {
 
   ip4_t (std::array<uint8_t, 4>&& arr) : std::array<uint8_t, 4> (arr) {}
 
-  ip4_t (std::initializer_list<uint8_t> values) {
-    assert (values.size () == 4);
-    std::copy (values.begin (), values.end (), this);
-  }
+  // for constructor ip4_t({1,2,3,4}) we can use native constructor
+  //ip4_t (std::initializer_list<uint8_t> values) {
+  //  assert (values.size () == 4);
+  //  std::copy (values.begin (), values.end (), this);
+  //}
 
   template <size_t Size>
   ip4_t (char (&&value)[Size]) {
@@ -122,6 +124,10 @@ struct ip4_t : public std::array<uint8_t, 4> {
 
   ip4_t (const char* value) {
     from_str (value);
+  }
+
+  ip4_t (const char* value, size_t length) {
+    from_str (value, length);
   }
 
   ip4_t (const std::string& value) {
@@ -201,6 +207,7 @@ struct std::hash<ip4_t> {
 
 
 struct ip6_t : public std::array<uint8_t, 16> {
+
   // "5555:6666:7777:8888:9999:aaaa:bbbb:cccc"
   // "1:2:3:4:5:6:7:8"
   // "1::5:6:7:8"
@@ -463,6 +470,13 @@ static inline std::ostream& operator<< (std::ostream& os, const ip6_t& ipv6) {
   return os;
 }
 
+template <>
+struct std::hash<ip6_t> {
+  inline std::size_t operator() (const ip6_t& ip) const noexcept{
+    return *((uint64_t*)&ip) ^ *((uint64_t*)&ip + 1);
+  }
+};
+
 enum ip_type_e { v4 = 4, v6 = 16 };
 
 template <ip_type_e type>
@@ -480,3 +494,247 @@ struct ip_t_<v6> {
 
 template <ip_type_e type>
 using ip_t = typename ip_t_<type>::type;
+
+// addr_t
+
+struct addr4_t {
+
+  ip4_t    ip   = {};
+  uint16_t port = 0; // le
+
+  // nnn.nnn.nnn.nnn:ppppp
+  addr4_t& from_str (const char* value, size_t length = 21, bool* success = nullptr) {
+
+    size_t      ip_length = 0;
+    const char* ptr     = value;
+    size_t      accum   = 0;
+
+    while (*ptr && length--) {
+      if (ip_length == 0) {
+        if (*ptr == ':')
+          ip_length = ptr - value;
+        else if ((*ptr < '0' || '9' < *ptr) && (*ptr < 'a' || 'f' < *ptr) && (*ptr < 'A' || 'F' < *ptr) && *ptr != 'x' && *ptr != '.')
+          break;
+      }
+      else {
+        if ('0' <= *ptr && *ptr <= '9')
+          accum = accum * 10 + (*ptr - '0');
+        else
+          break;
+      }
+      ptr++;
+    }
+
+    ip.from_str (value, ip_length, success);
+
+    if (ip_length == 0 || accum == 0 || accum > 0xffff) {
+      if (success)
+        *success = false;
+      *this = {};
+    }
+    else    
+      port = (uint16_t)accum;
+
+    return *this;
+
+  }
+
+  addr4_t () = default;
+
+  addr4_t (const ip4_t& ip_, uint16_t port_) : ip (ip_), port (port_) {}
+
+  template <size_t Size>
+  addr4_t (char (&&value)[Size]) {
+    from_str (value, Size);
+  }
+
+  addr4_t (const char* value) {
+    from_str (value);
+  }
+
+  addr4_t (const char* value, size_t length) {
+    from_str (value, length);
+  }
+
+  addr4_t (const std::string& value) {
+    from_str (value.data (), value.size ());
+  }
+
+  template <size_t Size>
+  addr4_t (const std::array<uint8_t, Size>& value) {
+    from_str (value.data(), Size);
+  }
+
+  std::string to_str () const {
+    return ip.to_str() + ':' + std::to_string (port);
+  }
+
+  operator std::string () const {
+    return to_str ();
+  }
+
+  operator bool () const {
+    return (ip && port != 0);
+  }
+
+  bool operator== (const addr4_t& other_addr) const {
+    return this->ip == other_addr.ip && this->port == other_addr.port;
+  }
+
+};
+
+static inline std::ostream& operator<< (std::ostream& os, const addr4_t& addr4) {
+  os << addr4.to_str ();
+  return os;
+}
+
+template <>
+struct std::hash<addr4_t> {
+  std::size_t operator() (const addr4_t& addr4) const noexcept {
+    return hash<ip4_t> {}(addr4.ip) ^ hash<uint16_t> {}(addr4.port);
+  }
+};
+
+
+
+struct addr6_t {
+
+  ip6_t    ip;
+  uint16_t port; // le
+
+  // [xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:nnn.nnn.nnn.nnn]:ppppp
+  addr6_t& from_str (const char* value, size_t length = 53, bool* success = nullptr) {
+
+    enum { open, ipp, close, tochki, portt, error, end } state = open;
+    const char* ip_ptr    = nullptr;
+    size_t      ip_length = 0;
+    const char* ptr       = value;
+    size_t      accum     = 0;
+
+    while (*ptr && length-- && state != error) {
+      switch (state) {
+        case open:
+          if (*ptr == '[') {
+            ip_ptr = ptr + 1;
+            state  = ipp;
+          }
+          else
+            state = error;
+        break;
+        case ipp:
+          if (*ptr == ']') {
+            ip_length = ptr - ip_ptr;
+            if (ip_length >= 2)
+              state = close;
+            else
+              state = error;
+          }
+          else if ((*ptr < '0' || '9' < *ptr) && (*ptr < 'a' || 'f' < *ptr) && (*ptr < 'A' || 'F' < *ptr) && *ptr != ':' && *ptr != '.')
+            state = error;
+        break;
+        case close:
+          if (*ptr == ':')
+            state  = portt;
+          else
+            state = error;
+        break;
+        case portt:
+          if ('0' <= *ptr && *ptr <= '9')
+            accum = accum * 10 + (*ptr - '0');
+          else if (accum != 0)
+            state = end;
+          else
+            state = error;
+        break;
+        default:
+        break;
+      }
+      ptr++;
+    }
+
+    if (state != error)
+      ip.from_str (ip_ptr, ip_length, success);
+
+    if (state == error || accum > 0xffff) {
+      if (success)
+        *success = false;
+      *this = {};
+    }
+    else
+      port = (uint16_t)accum;
+
+    return *this;
+
+  }
+
+  addr6_t () = default;
+
+  addr6_t (const ip6_t& ip_, uint16_t port_) : ip (ip_), port (port_) {}
+
+  template <size_t Size>
+  addr6_t (char (&&value)[Size]) {
+    from_str (value, Size);
+  }
+
+  addr6_t (const char* value) {
+    from_str (value);
+  }
+
+  addr6_t (const char* value, size_t length) {
+    from_str (value, length);
+  }
+
+  addr6_t (const std::string& value) {
+    from_str (value.data (), value.size ());
+  }
+
+  template <size_t Size>
+  addr6_t (const std::array<uint8_t, Size>& value) {
+    from_str (value.data (), Size);
+  }
+
+  std::string to_str (bool reduction = true, bool embedded_ipv4 = false) const {
+    return std::string ("[") + ip.to_str (reduction, embedded_ipv4) + std::string ("]:") + std::to_string (port);
+  }
+
+  operator std::string () const {
+    return to_str ();
+  }
+
+  operator bool () const {
+    return (ip && port != 0);
+  }
+
+  bool operator== (const addr6_t& other_addr) const {
+    return this->ip == other_addr.ip && this->port == other_addr.port;
+  }
+
+};
+
+static inline std::ostream& operator<< (std::ostream& os, const addr6_t& addr6) {
+  os << addr6.to_str ();
+  return os;
+}
+
+template <>
+struct std::hash<addr6_t> {
+  inline std::size_t operator() (const addr6_t& addr6) const noexcept {
+    return hash<ip6_t> {}(addr6.ip) ^ hash<uint16_t> {}(addr6.port);
+  }
+};
+
+template <ip_type_e type>
+struct addr_t_;
+
+template <>
+struct addr_t_<v4> {
+  using type = addr4_t;
+};
+
+template <>
+struct addr_t_<v6> {
+  using type = addr6_t;
+};
+
+template <ip_type_e type>
+using addr_t = typename addr_t_<type>::type;
