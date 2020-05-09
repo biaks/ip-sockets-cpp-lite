@@ -2,7 +2,7 @@
 /*
  * ip-sockets-cpp-lite — header-only C++ networking utilities
  * 
- * Copyright (c) 2020 biaks
+ * Copyright (c) 2020 biaks ianiskr@gmail.com
  * Licensed under the MIT License
  */
 
@@ -16,14 +16,50 @@
 #include <string>
 #include <cassert>
 
+// base classes for working with ipv4 and ipv6 addresses classes are based on standard std::array<uint, type>
+// and can be "overlayed" onto corresponding memory areas, for example:
+// uint8_t fragment[10] = {0xff,  0xc0, 0xa8, 0x02, 0x01,  0xff,0xff,0xff,0xff,0xff};
+// ip4_t& ipv4 = *((ip4_t*)&fragment[1]);
+// after that, all tools for working with this ip address become available, without copying the ip address itself
+//
+// also, classes can be declared in two different ways:
+// use ip4_t and ip6_t classes directly where it is known in advance which ip address type will be used
+// or use the generic form ip_t<type> where working with an abstract ip address is intended, for example:
+// template <ip_type_e type>
+// struct ip_address_holder_t {
+//   ip_t<type> ip_address;
+// };
+//
+// also, this universal form allows reverse type deduction and determining, for example, the ip address type:
+// template <ip_type_e type>
+// struct ip_detector;
+// template <>
+// ip_detector<ip_t<v4>> {
+//   static inline const char* type() { return "ipv4"; }
+// }
+// ip_detector<ip_t<v6>> {
+//   static inline const char* type() { return "ipv6"; }
+// }
+// template <class Ip>
+// void print_type () { std::cout << ip_detector<Ip>::type(); }
+
+
 struct ip4_t : public std::array<uint8_t, 4> {
+  // Parses a text string with an IP address according to the rules.
+  // The string can contain from one to four numbers separated by dots.
+  // Each number can be encoded as HEX (hexadecimal number) or as DEC (decimal number).
+  // If there is one number, it is interpreted as uint32 (i.e., one number contains the entire ip address).
+  // If there are 2 to 4 numbers, they are interpreted as values of individual address octets, empty octets are filled with zeros.
+  // The IP address value is stored in the std::array<uint8_t, 4> array from high byte to low byte (big endian).
+  // If parsing fails, the result will be 0.0.0.0. To get confirmation of successful parsing, pass a pointer to a bool variable
+  // as the success parameter, which will be set to true in case of successful parsing.
+  // Examples:
   // "192.168.2.1"
   // "192.0xa8.2.0x1"
   // "0xc0a80201"
   // "3232236033"
   // "127.1"
   ip4_t& from_str (const char* value, size_t length = 20, bool* success = nullptr) { // max length = "0xFF.0xFF.0xFF.0xFF" = 20
-
     enum { start, cont, hex, dec, error } state = start;
 
     uint8_t  result[3] = {};
@@ -110,12 +146,6 @@ struct ip4_t : public std::array<uint8_t, 4> {
   ip4_t () = default;
 
   ip4_t (std::array<uint8_t, 4>&& arr) : std::array<uint8_t, 4> (arr) {}
-
-  // for constructor ip4_t({1,2,3,4}) we can use native constructor
-  //ip4_t (std::initializer_list<uint8_t> values) {
-  //  assert (values.size () == 4);
-  //  std::copy (values.begin (), values.end (), this);
-  //}
 
   template <size_t Size>
   ip4_t (char (&&value)[Size]) {
@@ -208,6 +238,13 @@ struct std::hash<ip4_t> {
 
 struct ip6_t : public std::array<uint8_t, 16> {
 
+  // Parses a text string with an IP address according to the rules.
+  // The string can contain from zero to eight HEX (hexadecimal) numbers separated by ':'
+  // Additionally, compression of one or more zero numbers using '::' is supported
+  // Also, notation with an ipv4 address instead of the last two numbers is supported. The ipv4 address can only be written with decimal digits.
+  // If parsing fails, the result will be 0.0.0.0. To get confirmation of successful parsing, pass a pointer to a bool variable
+  // as the success parameter, which will be set to true in case of successful parsing.
+  // Examples:
   // "5555:6666:7777:8888:9999:aaaa:bbbb:cccc"
   // "1:2:3:4:5:6:7:8"
   // "1::5:6:7:8"
@@ -218,7 +255,6 @@ struct ip6_t : public std::array<uint8_t, 16> {
   // "::192.168.2.1"
   // "5555:6666:7777:8888:9999:aaaa:255.255.255.255"
   ip6_t& from_str (const char* value, size_t length = 45, bool* success = nullptr) {
-
     enum { start, proc, error } state = start;
 
     uint16_t result_hex[8] = {};
@@ -324,6 +360,17 @@ struct ip6_t : public std::array<uint8_t, 16> {
 
   ip6_t (std::array<uint8_t, 16>&& arr) : std::array<uint8_t, 16> (arr) {}
 
+
+  // For translating ipv4 addresses to ipv6, we choose the method supported by ClickHouse ::ffff:x.x.x.x/96 rfc4291 https://www.iana.org/go/rfc4291
+  ip6_t (std::array<uint8_t, 4>&& ipv4) : std::array<uint8_t, 16> () {
+    (*this)[10] = 0xff; (*this)[11] = 0xff; (*this)[12] = ipv4[0]; (*this)[13] = ipv4[1]; (*this)[14] = ipv4[2]; (*this)[15] = ipv4[3];
+  }
+
+  // For translating ipv4 addresses to ipv6, we choose the method supported by ClickHouse ::ffff:x.x.x.x/96 rfc4291 https://www.iana.org/go/rfc4291
+  ip6_t (const ip4_t& ipv4) : std::array<uint8_t, 16> () {
+    (*this)[10] = 0xff; (*this)[11] = 0xff; (*this)[12] = ipv4[0]; (*this)[13] = ipv4[1]; (*this)[14] = ipv4[2]; (*this)[15] = ipv4[3];
+  }
+
   template <size_t Size>
   ip6_t (char (&&value)[Size]) {
     from_str (value, Size);
@@ -367,6 +414,17 @@ struct ip6_t : public std::array<uint8_t, 16> {
     return *((ip4_t*)this + 3); // 4*3 = 12
   }
 
+  bool is_ip4() const {
+
+    uint32_t first = ((const uint32_t*)this)[0];
+    uint32_t second = ((uint32_t*)this)[1];
+    uint32_t thrird = ((uint32_t*)this)[2];
+
+    return first == 0 &&
+           second == 0 &&
+           thrird == 0xffff0000;
+  }
+
   ip6_t (uint8_t prefix) {
     const uint8_t masks[9]  = { 0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff };
     const uint8_t byte_size = 8;
@@ -387,15 +445,19 @@ struct ip6_t : public std::array<uint8_t, 16> {
     return *this;
   }
 
+  // Converts ipv6 address to text representation
+  // Supports address compression, as well as output with last two groups represented as ipv4 address
+  // reduction - enable address compression (replacing empty groups with '::')
+  // embedded_ipv4 - enable representation of last two groups as ipv4 address
   std::string to_str (bool reduction = true, bool embedded_ipv4 = false) const {
 
     std::string                result;
     const char                 symbols[] = "0123456789abcdef";
-    bool                       tochka    = false;
+    bool                       dot       = false;
     const uint16_t*            part      = (uint16_t*)this;
     enum { start, found, end } zero      = (reduction) ? start : end;
 
-    result.reserve (45);
+    result.reserve (45); // maximum length "xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:nnn.nnn.nnn.nnn" = 45
 
     for (size_t i = 0; i < ((embedded_ipv4) ? 6 : 8); i++, part++) {
       if (*part == 0 && zero == start) {
@@ -503,6 +565,7 @@ struct addr4_t {
   uint16_t port = 0; // le
 
   // nnn.nnn.nnn.nnn:ppppp
+  // any_format_supported_by_ip4_t_class:ppppp
   addr4_t& from_str (const char* value, size_t length = 21, bool* success = nullptr) {
 
     size_t      ip_length = 0;
@@ -514,7 +577,7 @@ struct addr4_t {
         if (*ptr == ':')
           ip_length = ptr - value;
         else if ((*ptr < '0' || '9' < *ptr) && (*ptr < 'a' || 'f' < *ptr) && (*ptr < 'A' || 'F' < *ptr) && *ptr != 'x' && *ptr != '.')
-          break;
+          break; // this is error, break
       }
       else {
         if ('0' <= *ptr && *ptr <= '9')
@@ -603,6 +666,7 @@ struct addr6_t {
   uint16_t port; // le
 
   // [xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:nnn.nnn.nnn.nnn]:ppppp
+  // [any_format_supported_by_ip6_t_class]:ppppp
   addr6_t& from_str (const char* value, size_t length = 53, bool* success = nullptr) {
 
     enum { open, ipp, close, tochki, portt, error, end } state = open;
@@ -738,3 +802,94 @@ struct addr_t_<v6> {
 
 template <ip_type_e type>
 using addr_t = typename addr_t_<type>::type;
+
+
+// here is a lot of theory about IPv6 addresses
+// and different ways of packing ipv4 addresses into ipv6 addresses
+
+// about ipv6 addresses: https://en.wikipedia.org/wiki/IPv6_address
+// https://www.ccexpert.us/routing-switching-2/ipv6-address-types.html
+
+// UNICAST - represents the address of a specific interface (receiver). the packet is delivered to the specified interface
+// ANYCAST - represents a group of interfaces (receivers). the packet is delivered to any one interface from the specified group
+// MULTICAST - represents a group of interfaces (receivers). the packet is delivered to all interfaces from the specified group
+
+// UNICAST
+// ANYCAST
+// network       subnet         interface
+// 48 or more    16 or less     64
+// XXXX:XXXX:XXXX: XXXX :XXXX:XXXX:XXXX:XXXX
+// XXXX:XXXX:XXXX:XXXX  :XXXX:XXXX:XXXX:XXXX
+
+// LOCAL
+// prefix                        interface
+// 10 = 0b1111111010            64
+// fe80:0000:0000:0000  :XXXX:XXXX:XXXX:XXXX
+
+// ::1/128 — The loopback address is a unicast localhost address
+//           (corresponding to 127.0.0.1/8 in IPv4).
+// fe80::/10 — Addresses in the link-local prefix are only valid and unique on a single link
+//            (comparable to the auto-configuration addresses 169.254.0.0/16 of IPv4).
+// fc00::/7 — Unique local addresses (ULAs) are intended for local communication[34]
+//            (comparable to IPv4 private addresses 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16).
+
+// TEREDO - is a tunneling mechanism for ipv6 internet access for ipv4 clients through ipv4 network https://www.rfc-editor.org/rfc/rfc4380
+
+// Teredo IPv6 Address https://blog.ip2location.com/knowledge-base/what-is-teredo-tunneling/
+// teredo prefix   teredo server       ~NAT port  ~client IP
+// 2001:0000      :x.x.x.x       :8000 :port      :x.x.x.x
+
+// Teredo ip6to4 https://blog.ip2location.com/knowledge-base/what-is-6to4-tunneling/
+// teredo prefix ipv4 address  subnet
+// 2001          :x.x.x.x     :XXXX   :0000:0000 :x.x.x.x
+
+// Dedicated IPv6 addresses for internet. "2000::/16" up to 2001. "2001::/16" after 2001. "2002::/16" for routing from IPv6 to IPv4 on the internet.
+
+// MULTICAST (old) RFC 2373
+// prefix fig sc group
+// 8       4   4  112
+// ff      x   x  :XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX
+
+// MULTICAST (new) RFC 3306, updated by RFC 7371
+// prefix ff1 sc ff2 rsrvd plen prefix              group
+// 8       4   4  4   4     8    64                   32
+// ff      x   x :x   x     xx  :XXXX:XXXX:XXXX:XXXX :XXXX:XXXX
+
+// transform ipv4 to ipv6:
+// http://www.gestioip.net/cgi-bin/subnet_calculator.cgi
+// https://www.iana.org/assignments/iana-ipv6-special-registry/iana-ipv6-special-registry.xml
+// ::ffff:x.x.x.x/96                   - IPv4-mapped IPv6 address                            ::ffff:0:0/96   rfc4291 https://www.iana.org/go/rfc4291
+// ::ffff:0:x.x.x.x/96                 - IPv4-translated IPv6 address
+// 2002:x.x.x.x::                      - Additional 6to4 information                         2002::/16       rfc3056 https://www.iana.org/go/rfc3056
+// 64:ff9b::x.x.x.x/96                 - IPv4-IPv6 Translatable Address - Global internet    64:ff9b::/96    rfc6052 https://www.iana.org/go/rfc6052
+// 64:ff9b:1:ffff:ffff:ffff:x.x.x.x/48 - IPv4-IPv6 Translatable Address - Private internets  64:ff9b:1::/48  rfc8215 https://www.iana.org/go/rfc8215
+
+// The prefix that we recommend has the particularity of being "checksum neutral".
+// The sum of the hexadecimal numbers "0064" and "ff9b" is "ffff",
+// i.e.,
+// a value equal to zero in one's complement arithmetic. An IPv4-embedded IPv6 address constructed
+// with this prefix will have the same one's complement checksum as the embedded IPv4 address.
+
+// 127.0.0.1/8 -> ::1/128
+// 169.254.0.0/16 -> fe80::/10
+// 192.168.0.0/16 -> fc00::/7
+// 10.0.0.0/8 -> fc00::/7
+
+// rfc4291 https://www.rfc-editor.org/rfc/rfc4291
+// 2.5.5.1.  IPv4-Compatible IPv6 Address
+//   ::x.x.x.x - ipv4 address must be unique, this type is now deprecated
+// 2.5.5.2.  IPv4-Mapped IPv6 Address (more details rfc4038 https://www.rfc-editor.org/rfc/rfc4038)
+//   ::ffff:x.x.x.x -
+
+// more about multicast addresses: https://en.wikipedia.org/wiki/Multicast_address#IPv6
+
+// "IP" or "[IP]"
+// "xxxx" can be shortened to a single value "x"
+// ::
+// ::xxxx
+// xxxx::
+// ::xxxx:xxxx:xxxx
+// xxxx:xxxx:xxxx::
+// xxxx::xxxx
+// max length xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:nnn.nnn.nnn.nnn
+// ipv4 a.b.c.d -> ipv6 ::ffff:a.b.c.d

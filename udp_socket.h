@@ -1,7 +1,7 @@
 /*	
  * ip-sockets-cpp-lite — header-only C++ networking utilities
  * 
- * Copyright (c) 2020 biaks
+ * Copyright (c) 2020 biaks ianiskr@gmail.com
  * Licensed under the MIT License
  */
 
@@ -31,13 +31,12 @@
   #define SOCKET_ERROR   -1
   #define INVALID_SOCKET -1 // since windows returns a pointer, error will be different value "~0" (inverted zero)
 #else
-//  #define NOMINMAX
   // it is written here that for historical reasons, windows.h MUST NOT be included before winsock2.h
-  // https://learn.microsoft.com/ru-ru/windows/win32/winsock/include-files-2
   #include <winsock2.h> // header file containing actual socket function implementations
   #include <ws2tcpip.h> // header file containing various TCP/IP related APIs
                         // (converting various data to protocol-compatible format, etc.)
   #pragma comment(lib, "Ws2_32.lib")
+  #pragma warning(disable : 4548) // suppress warning that occurs in FD_SET macro on expression "while(0, 0)"
   using socket_t  = SOCKET;
   struct wsa_catcher_t {
     WSADATA wsaData;
@@ -519,5 +518,44 @@ struct udp_socket_t {
   // udp<ip4,client>: [0x0002].sendto()   [192.168.1.1:2000 -> 192.168.1.1:2001] error, system answer: bla bla bla
 
   }
+
+
+
+  // static address conversion functions
+
+  static inline sockaddr_in address2sockaddr (const addr4_t& address) {
+    sockaddr_in result;
+    memset (&result, 0, sizeof (result));
+    result.sin_family = af_inet;
+    result.sin_port   = common::htonT (address.port);
+    result.sin_addr   = *((in_addr*)&address.ip);
+    return result;
+  }
+
+  static inline sockaddr_in6 address2sockaddr (const addr6_t& address) {
+    sockaddr_in6 result;
+    memset (&result, 0, sizeof (result));
+    result.sin6_family = af_inet;
+    result.sin6_port   = common::htonT (address.port);
+    result.sin6_addr   = *((in6_addr*)&address.ip);
+    return result;
+  }
+
+  static inline addr4_t sockaddr2address (const sockaddr_in& address) {
+    addr4_t result;
+    if (address.sin_family == AF_INET6) throw;
+    *((in_addr*)&result.ip) = address.sin_addr;
+    result.port             = common::ntohT (address.sin_port);
+    return result;
+  }
+
+  static inline addr6_t sockaddr2address (const sockaddr_in6& address) {
+    addr6_t result;
+    if (address.sin6_family == AF_INET) throw;
+    *((in6_addr*)&result.ip) = address.sin6_addr;
+    result.port              = common::ntohT (address.sin6_port);
+    return result;
+  }
+
 
 };
