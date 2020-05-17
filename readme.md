@@ -36,6 +36,15 @@ Cross-platform UDP socket abstraction:
 - Explicit socket state and error handling
 - Cross-platform API (POSIX / Windows)
 
+### `tcp_socket.h`
+TCP socket abstraction built on top of `udp_socket.h`:
+
+- Unified TCP client and server
+- Blocking I/O with timeouts
+- Accept loop helpers
+- Explicit connection state handling
+- Same API style as UDP for consistency
+
 License
 
 MIT (or your preferred license)
