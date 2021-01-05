@@ -1,5 +1,6 @@
 /*	
  * ip-sockets-cpp-lite — header-only C++ networking utilities
+ * https://github.com/biaks/ip-sockets-cpp-lite
  * 
  * Copyright (c) 2020 biaks ianiskr@gmail.com
  * Licensed under the MIT License
@@ -7,7 +8,7 @@
 
 #pragma once
 
-#include "common/ip.h"
+#include "ip.h"
 
 #include <algorithm>
 #include <cstring> //memset
