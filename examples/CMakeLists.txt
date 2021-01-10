@@ -4,7 +4,7 @@ if(NOT WIN32)
   target_link_libraries(${PROJECT_NAME} INTERFACE ${CMAKE_THREAD_LIBS_INIT})
 endif()
 
-add_executable       (ip "ip.cpp")
+add_executable       (ip_address "ip_address.cpp")
 target_link_libraries(ip ip-sockets-cpp-lite)
 
 add_executable       (udp_socket "udp_socket.cpp")
