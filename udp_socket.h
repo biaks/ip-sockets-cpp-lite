@@ -18,25 +18,14 @@
 #include <vector>
 
 //cross platform includes
-#ifndef _WIN32
-  /* Assume that any non-Windows platform uses POSIX-style sockets instead. */
-  #include <sys/socket.h>
-  #include <arpa/inet.h>
-  //#include <netdb.h>  /* Needed for getaddrinfo() and freeaddrinfo() */
-  #include <unistd.h> /* Needed for close() */
-  // #include <fcntl.h> // would be needed to set non-block mode
-  #ifndef closesocket
-    #define closesocket(s) ::close(s) // windows uses closesocket(), while linux uses standard close() for descriptors
-  #endif
-  using socket_t = int;
-  #define SOCKET_ERROR   -1
-  #define INVALID_SOCKET -1 // since windows returns a pointer, error will be different value "~0" (inverted zero)
-#else
+#ifdef _WIN32 // WINDOWS OS
   // it is written here that for historical reasons, windows.h MUST NOT be included before winsock2.h
+  // https://learn.microsoft.com/en-us/windows/win32/winsock/include-files-2
   #include <winsock2.h> // header file containing actual socket function implementations
   #include <ws2tcpip.h> // header file containing various TCP/IP related APIs
-                        // (converting various data to protocol-compatible format, etc.)
+  // (converting various data to protocol-compatible format, etc.)
   #pragma comment(lib, "Ws2_32.lib")
+  // https://learn.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-c4548?view=msvc-170
   #pragma warning(disable : 4548) // suppress warning that occurs in FD_SET macro on expression "while(0, 0)"
   using socket_t  = SOCKET;
   struct wsa_catcher_t {
@@ -49,7 +38,23 @@
       WSACleanup ();
     }
   };
-  extern wsa_catcher_t wsa_catcher;
+  inline wsa_catcher_t& ensure_wsa() {
+    static wsa_catcher_t catcher;
+    return catcher;
+  }
+#else         // LINUX OS
+  // Assume that any non-Windows platform uses POSIX-style sockets instead.
+  #include <sys/socket.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>  // Needed for getaddrinfo() and freeaddrinfo()
+  #include <unistd.h> // Needed for close()
+  // #include <fcntl.h> // would be needed to set non-block mode
+  #ifndef closesocket
+    #define closesocket(s) ::close(s) // windows uses closesocket(), while linux uses standard close() for descriptors
+  #endif
+  using socket_t = int;
+  #define SOCKET_ERROR   -1
+  #define INVALID_SOCKET -1 // since windows returns a pointer, error will be different value "~0" (inverted zero)
 #endif
 
 // server:
@@ -127,40 +132,24 @@
 //    connect(->AF_UNSPEC)   ip_src:port_src
 //
 
+namespace ipsockets {
 
-enum class socket_type_e {
-  server,
-  client
-};
+  enum class socket_type_e {
+    server,
+    client
+  };
 
-template <ip_type_e Ip_type>
-struct make_in_addr;
+  enum class log_e {
+    debug,
+    info,
+    error,
+    none
+  };
 
-template <> struct make_in_addr<v4> { using type = in_addr; };
-template <> struct make_in_addr<v6> { using type = in6_addr; };
-
-template <ip_type_e Ip_type>
-using make_in_addr_t = typename make_in_addr<Ip_type>::type;
-
-
-template <ip_type_e Ip_type>
-struct make_sockaddr_in;
-
-template <> struct make_sockaddr_in<v4> { using type = sockaddr_in; };
-template <> struct make_sockaddr_in<v6> { using type = sockaddr_in6; };
-
-template <ip_type_e Ip_type>
-using make_sockaddr_in_t = typename make_sockaddr_in<Ip_type>::type;
-
-template <ip_type_e Ip_type, socket_type_e Socket_type>
-struct udp_socket_t {
-
-  static const ip_type_e     ip_type       = Ip_type;
-  static const socket_type_e socket_type   = Socket_type;
-  static const int           af_inet       = (Ip_type == v4) ? AF_INET : AF_INET6;
-  using                      address_t     = addr_t<Ip_type>;
-  using                      in_addr_t     = make_in_addr_t<Ip_type>;
-  using                      sockaddr_in_t = make_sockaddr_in_t<Ip_type>;
+  enum class state_e {
+    state_created,
+    state_opened
+  };
 
   enum error_e {
     no_error              =  0,
@@ -175,388 +164,502 @@ struct udp_socket_t {
     error_other           = -9
   };
 
-  enum state_e { state_created, state_opened };
+  template <ip_type_e Ip_type>
+  struct make_in_addr;
 
-  state_e state = state_created;
+  template <> struct make_in_addr<v4> { using type = in_addr;  };
+  template <> struct make_in_addr<v6> { using type = in6_addr; };
 
-  enum class log_e {
-    debug,
-    info,
-    error,
-    none
-  };
-  log_e log_level;
+  template <ip_type_e Ip_type>
+  using make_in_addr_t = typename make_in_addr<Ip_type>::type;
 
-  socket_t sock = INVALID_SOCKET;
+  template <ip_type_e Ip_type>
+  struct make_sockaddr_in;
 
-  address_t address_local  = {};
-  address_t address_remote = {};
+  template <> struct make_sockaddr_in<v4> { using type = sockaddr_in;  };
+  template <> struct make_sockaddr_in<v6> { using type = sockaddr_in6; };
 
-  int type     = SOCK_DGRAM;
-  int protocol = IPPROTO_UDP;
+  template <ip_type_e Ip_type>
+  using make_sockaddr_in_t = typename make_sockaddr_in<Ip_type>::type;
 
-  std::string tname = std::string ("udp<") + ((ip_type == v4) ? "ip4," : "ip6,")
-                    + ((socket_type == socket_type_e::server) ? "server>" : "client>");
+  template <ip_type_e Ip_type, socket_type_e Socket_type>
+  struct udp_socket_t {
 
-  udp_socket_t (log_e log_level_ = log_e::info) : log_level (log_level_) {
-    #ifdef _WIN32 // to prevent compiler from discarding this object, reference it here
-      wsa_catcher_t* wc = &wsa_catcher;
-    #endif
-  }
+    static const ip_type_e     ip_type       = Ip_type;
+    static const socket_type_e socket_type   = Socket_type;
+    static const int           af_inet       = (Ip_type == v4) ? AF_INET : AF_INET6;
+    using                      address_t     = addr_t<Ip_type>;
+    using                      in_addr_t     = make_in_addr_t<Ip_type>;
+    using                      sockaddr_in_t = make_sockaddr_in_t<Ip_type>;
 
-  udp_socket_t (const udp_socket_t& socket) = delete;
+    state_e  state = state_e::state_created;
+    log_e    log_level;
+    socket_t sock = INVALID_SOCKET;
 
-  udp_socket_t (udp_socket_t&& os)
-    : state (os.state), log_level (os.log_level), sock (os.sock),
-      address_local (os.address_local), address_remote (os.address_remote),
-      type (os.type), protocol (os.protocol), tname(std::move(os.tname)) {
-    os.state          = state_created;
-    os.sock           = INVALID_SOCKET;
-    os.address_local  = {};
-    os.address_remote = {};
-  }
+    address_t address_local  = {};
+    address_t address_remote = {};
 
-  ~udp_socket_t () {
-    close ();
-  }
+    int type     = SOCK_DGRAM;
+    int protocol = IPPROTO_UDP;
 
-  address_t _getsockname () {
-    sockaddr_in_t addr     = {};
-    socklen_t     addr_len = sizeof (sockaddr_in_t);
-    getsockname (sock, (sockaddr*)&addr, &addr_len);
-    return sockaddr2address (addr);
-  }
-
-  address_t _getpeername () {
-    sockaddr_in_t addr     = {};
-    socklen_t     addr_len = sizeof (sockaddr_in_t);
-    getpeername (sock, (sockaddr*)&addr, &addr_len);
-    return sockaddr2address (addr);
-  }
-
-  int _get_err () {
-    #ifdef _WIN32
-      return WSAGetLastError ();
-    #else
-      return errno;
-    #endif
-  }
-
-  int open (const address_t& address, uint32_t timeout_ms = 1000) {
-
-    if (state == state_opened)     return log_and_return ('-', "open", error_already_opened);
-
-    // open socket
-    sock = socket (af_inet, type, protocol);
-    if (sock == INVALID_SOCKET) {
-      log_and_return ('-', "open", _get_err(), (type == SOCK_RAW) ? "socket in RAW mode" : nullptr);
-      return error_open_failed;
+    static inline std::string get_tname() {
+      return std::string ("udp<") + ((Ip_type == v4) ? "ip4," : "ip6,") + ((Socket_type == socket_type_e::server) ? "server>" : "client>");
     }
 
-    int res;
+    std::string tname = get_tname();
 
-    if (type == SOCK_RAW) {
-
-      #if !defined(WIN32)
-
-        int ov = 1;
-        res    = setsockopt (sock, IPPROTO_IP, IP_HDRINCL, &ov, sizeof (ov));
-        if (res == SOCKET_ERROR) return log_and_return ('-', "setsockopt", _get_err(), "set IP_HDRINCL");
-        else                            log_and_return ('-', "setsockopt", no_error,   "set IP_HDRINCL");
-
-        state          = state_opened;
-        address_remote = address;
-
-        return log_and_return ('-', "open", no_error, "socket in RAW mode");
-
-      #else
-
-        //#error Raw socket on windows not implemented
-        return log_and_return ('-', "setsockopt", error_not_allowed, "set IP_HDRINCL");
-
+    udp_socket_t (log_e log_level_ = log_e::info) : log_level (log_level_) {
+      #ifdef _WIN32 // WINDOWS OS - to prevent compiler from discarding this object, reference it here
+        ensure_wsa();
       #endif
-
     }
 
-    // if socket will work in server mode, allow multiple listeners simultaneously
-    if (socket_type == socket_type_e::server) {
-      int ov = 1;
-      res    = setsockopt (sock, SOL_SOCKET, SO_REUSEADDR, (char*)&ov, sizeof (ov));
-      if (res == SOCKET_ERROR) return log_and_return ('-', "setsockopt", _get_err (), "set SO_REUSEADDR");
-      else                            log_and_return ('-', "setsockopt", no_error,    "set SO_REUSEADDR");
+    udp_socket_t (const udp_socket_t& socket) = delete;
+
+    udp_socket_t (udp_socket_t&& os)
+      : state (os.state), log_level (os.log_level), sock (os.sock),
+        address_local (os.address_local), address_remote (os.address_remote),
+        type (os.type), protocol (os.protocol), tname(std::move(os.tname)) {
+      os.state          = state_e::state_created;
+      os.sock           = INVALID_SOCKET;
+      os.address_local  = {};
+      os.address_remote = {};
     }
 
-    // set timeout for recv and recvfrom to periodically "unstick" and allow checking conditions
-    #ifdef _WIN32
-      DWORD   tv =   timeout_ms; // in windows this value is stored in DWORD and should be in ms
-    #else
-      timeval tv = { timeout_ms / 1000, timeout_ms % 1000 }; // { sec, msec }
-    #endif
-    res = setsockopt (sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof (tv));
-    if (res == SOCKET_ERROR) return log_and_return ('-', "setsockopt", _get_err(), "set SO_RCVTIMEO");
-    else                            log_and_return ('-', "setsockopt", no_error,   "set SO_RCVTIMEO");
-
-    // if socket will work in server mode, bind it to local ip:port pair
-    // if it will work in client mode, "connect" it to remote ip:port pair
-    sockaddr_in_t addr = address2sockaddr (address);
-    res = (socket_type == socket_type_e::server)
-        ? ::bind    (sock, (sockaddr*)&addr, sizeof (sockaddr_in_t))
-        : ::connect (sock, (sockaddr*)&addr, sizeof (sockaddr_in_t));
-    int err = _get_err ();
-
-    if (socket_type == socket_type_e::server) {
-      address_local  = address;
-      address_remote = {};
-    } else {
-      address_local  = _getsockname ();
-      address_remote = address;
+    ~udp_socket_t () {
+      close ();
     }
 
-    if (res == SOCKET_ERROR) {
-      log_and_return ('-', "open", err, (socket_type == socket_type_e::server) ? "bind" : "connect");
-      closesocket (sock);
-      return error_open_failed;
+    address_t _getsockname () {
+      sockaddr_in_t addr     = {};
+      socklen_t     addr_len = sizeof (sockaddr_in_t);
+      getsockname (sock, (sockaddr*)&addr, &addr_len);
+      return sockaddr2address (addr);
     }
 
-    state = state_opened;
-    return log_and_return ('-', "open", no_error);
-
-  }
-
-  int close () {
-    if (state == state_opened) {
-      state = state_created;
-      closesocket (sock);
-      return log_and_return ('-', "close", no_error);
+    address_t _getpeername () {
+      sockaddr_in_t addr     = {};
+      socklen_t     addr_len = sizeof (sockaddr_in_t);
+      getpeername (sock, (sockaddr*)&addr, &addr_len);
+      return sockaddr2address (addr);
     }
-    return no_error;
-  }
 
-
-  int recv (char* buf, int buf_len) {
-
-    if (state       != state_opened)          return log_and_return ('<', "recv", error_not_open);
-    if (socket_type == socket_type_e::server) return log_and_return ('<', "recv", error_not_allowed);
-
-    int res        = ::recv (sock, buf, buf_len, 0);
-    int err        = _get_err ();
-    address_remote = _getpeername();
-    address_local  = _getsockname();
-
-    if (res == SOCKET_ERROR) return log_and_return ('<', "recv", err);
-    else                     return log_and_return ('<', "recv", no_error, "received", res);
-  }
-
-  int recvfrom (char* buf, int buf_len, address_t& address_from) {
-
-    if (state != state_opened) return log_and_return ('<', "recvfrom", error_not_open);
-
-    socklen_t     addr_len  = sizeof (sockaddr_in_t);
-    sockaddr_in_t addr_from = {};
-    int           res       = ::recvfrom (sock, buf, buf_len, 0, (sockaddr*)&addr_from, &addr_len);
-    int           err       = _get_err ();
-    address_remote          = sockaddr2address (addr_from);
-    address_local           = _getsockname ();
-    address_from            = address_remote;
-
-    if (res == SOCKET_ERROR) return log_and_return ('<', "recvfrom", err);
-    else                     return log_and_return ('<', "recvfrom", no_error, "received", res);
-  }
-
-  int send (const char* buf, int buf_len, int flags = 0) {
-
-    if (state       != state_opened)          return log_and_return ('>', "send", error_not_open);
-    if (socket_type == socket_type_e::server) return log_and_return ('>', "send", error_not_allowed);
-
-    int res        = ::send (sock, buf, buf_len, flags);
-    int err        = _get_err ();
-    address_local  = _getsockname ();
-    address_remote = _getpeername ();
-
-    if (res == SOCKET_ERROR) return log_and_return ('>', "send", err);
-    else                     return log_and_return ('>', "send", no_error, "sended", res);
-  }
-
-  int sendto (const char* buf, int data_len, address_t& address_to) {
-
-    if (state != state_opened) return log_and_return ('>', "sendto", error_not_open);
-
-    sockaddr_in_t addr_to = address2sockaddr (address_to);
-    int           res     = ::sendto (sock, buf, data_len, 0, (sockaddr*)&addr_to, sizeof (sockaddr_in_t));
-    int           err     = _get_err ();
-    if (type == SOCK_RAW) {
-      const ip4_t*    ip4_ptr     = (const ip4_t*)   (buf + 12);
-      const uint16_t* src_port_be = (const uint16_t*)(buf + 20);
-      address_local               = addr4_t (*ip4_ptr, common::ntohT<uint16_t> (*src_port_be));
-    }
-    else
-      address_local       = _getsockname ();
-    address_remote        = address_to;
-
-    if (res == SOCKET_ERROR) return log_and_return ('>', "sendto", err);
-    else                     return log_and_return ('>', "sendto", no_error, "sended", res);
-  }
-
-
-  // processing, output and error code conversion
-
-  int log_and_return (const char dir, const char* func, int err = 0, const char* mes = 0, int bytes = -1) {
-
-    // convert to our error code
-    int cerr;
-    
-    switch (err) {
-      #ifdef _WIN32
-      case WSAETIMEDOUT:     cerr = error_timeout;         break; // windows error code for timeout in recv when SO_RCVTIMEO != 0
-      case WSAEADDRNOTAVAIL: cerr = error_invalid_address; break; // error when remote address is invalid
-      case WSAECONNREFUSED:
-      case WSAECONNRESET:    cerr = error_unreachable; break; 
-      #else
-      case EWOULDBLOCK:      cerr = error_timeout;         break; // linux error code for timeout in recv when SO_RCVTIMEO != 0
-      case EADDRNOTAVAIL:    cerr = error_invalid_address; break; // error when remote address is invalid
-      case ECONNREFUSED:     cerr = error_unreachable;     break; 
+    static int _get_err () {
+      #ifdef _WIN32 // WINDOWS OS
+        return WSAGetLastError ();
+      #else         // LINUX OS
+        return errno;
       #endif
-      default:
-        if (err > 0) cerr = error_other;
-        else         cerr = err;
     }
 
-    // if error is timeout trigger, it's not an error, don't show anything
-    if (cerr == error_timeout)
-      return cerr;
+    int open (const address_t& address, uint32_t timeout_ms = 1000) {
 
-    if (    log_level == log_e::debug
-        || (log_level == log_e::info && (!strcmp (func, "open") || !strcmp (func, "close") || !strcmp (func, "accept") || cerr != no_error))
-        || (log_level == log_e::error && cerr != no_error)) {
+      if (state == state_e::state_opened)     return log_and_return ('-', "open", error_already_opened);
 
-      // get error description text
-      #ifdef _WIN32
-        const char* sysmesl = "";
-        LPTSTR sysmes       = NULL;
-        DWORD  dwLanguageId = 0x0409; // us-en    for russian leave 0x0000;
-        DWORD  dwFlags      = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
-        FormatMessageA (dwFlags, NULL, err, dwLanguageId, (LPSTR)&sysmes, 0, NULL);
-      #else
-        const char* sysmesl = "\n";
-        const char* sysmes = strerror (errno);
-      #endif
-
-      const char* ctext;
-      switch (cerr) {
-        case no_error:              ctext = "success";                            break;              
-        case error_tcp_closed:      ctext = "error, socket closed by other side"; break;
-        case error_already_opened:  ctext = "error, socket already opened";       break;
-        case error_open_failed:     ctext = "error, failed to open socket";       break;
-        case error_not_open:        ctext = "error, use closed socket";           break;
-        case error_timeout:         ctext = "receive timeout";                    break;
-        case error_unreachable:     ctext = "unreachable error";                  break;
-        case error_not_allowed:     ctext = "error, not allowed on this mode";    break;
-        case error_invalid_address: ctext = "error address";                      break;
-        default:                    ctext = "error";                              break;
+      // open socket
+      sock = socket (af_inet, type, protocol);
+      if (sock == INVALID_SOCKET) {
+        log_and_return ('-', "open", _get_err(), (type == SOCK_RAW) ? "socket in RAW mode" : nullptr);
+        return error_e::error_open_failed;
       }
-      
-      std::stringstream result;
-      
-      result << tname << ": ";
-      
-      if (sock == INVALID_SOCKET) result << "[undefined]";
-      else                        result << '[' << std::hex << sock << std::dec << ']';
-      
-      result << '.' << func << "() ";
-      
-      //if (address_local.port != 0 || address_remote.port != 0) {
-        std::string local  = (address_local.port  != 0) ? address_local.to_str ()  : "undefined";
-        std::string remote = (address_remote.port != 0) ? address_remote.to_str () : "undefined";
-        if      (dir == '>') result << "[" << local << " -> " << remote << "] ";
-        else if (dir == '<') result << "[" << local << " <- " << remote << "] ";
-        else                 result << "[" << local << " <> " << remote << "] ";
-      //}
-      
-      if (mes) result << mes << ' ';
-      
-      if      (bytes >= 0) result << bytes << " bytes\n";
-      else if (err > 0)    result << ctext << ", system answer: " << sysmes << sysmesl;
-      else                 result << ctext << std::endl;
-      
-      std::cout << result.str();
-      
-      #ifdef _WIN32
-        LocalFree (sysmes);
+
+      int res;
+
+      if (type == SOCK_RAW) {
+
+        #ifdef _WIN32 // WINDOWS OS
+
+          //#error Raw socket on windows not implemented
+          return log_and_return ('-', "setsockopt", error_not_allowed, "set IP_HDRINCL");
+
+        #else         // LINUX OS
+
+          int ov = 1;
+          res    = setsockopt (sock, IPPROTO_IP, IP_HDRINCL, &ov, sizeof (ov));
+          if (res == SOCKET_ERROR) return log_and_return ('-', "setsockopt", _get_err(), "set IP_HDRINCL");
+          else                            log_and_return ('-', "setsockopt", no_error,   "set IP_HDRINCL");
+  
+          state          = state_e::state_opened;
+          address_remote = address;
+  
+          return log_and_return ('-', "open", no_error, "socket in RAW mode");
+
+        #endif
+
+      }
+
+      // if socket will work in server mode, allow multiple listeners simultaneously
+      if (socket_type == socket_type_e::server) {
+        int ov = 1;
+        res    = setsockopt (sock, SOL_SOCKET, SO_REUSEADDR, (char*)&ov, sizeof (ov));
+        if (res == SOCKET_ERROR) return log_and_return ('-', "setsockopt", _get_err (), "set SO_REUSEADDR");
+        else                            log_and_return ('-', "setsockopt", no_error,    "set SO_REUSEADDR");
+      }
+
+      // set timeout for recv and recvfrom to periodically "unstick" and allow checking conditions
+      #ifdef _WIN32 // WINDOWS OS
+        DWORD   tv =   timeout_ms; // in windows this value is stored in DWORD and should be in ms
+      #else         // LINUX OS
+        timeval tv = { timeout_ms / 1000, timeout_ms % 1000 }; // { sec, msec }
       #endif
+      res = setsockopt (sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof (tv));
+      if (res == SOCKET_ERROR) return log_and_return ('-', "setsockopt", _get_err(), "set SO_RCVTIMEO");
+      else                            log_and_return ('-', "setsockopt", no_error,   "set SO_RCVTIMEO");
+
+      // if socket will work in server mode, bind it to local ip:port pair
+      // if it will work in client mode, "connect" it to remote ip:port pair
+      sockaddr_in_t addr = address2sockaddr (address);
+      res = (socket_type == socket_type_e::server)
+          ? ::bind    (sock, (sockaddr*)&addr, sizeof (sockaddr_in_t))
+          : ::connect (sock, (sockaddr*)&addr, sizeof (sockaddr_in_t));
+      int err = _get_err ();
+
+      if (socket_type == socket_type_e::server) {
+        address_local  = address;
+        address_remote = {};
+      }
+      else {
+        address_local  = _getsockname ();
+        address_remote = address;
+      }
+
+      if (res == SOCKET_ERROR) {
+        log_and_return ('-', "open", err, (socket_type == socket_type_e::server) ? "bind" : "connect");
+        closesocket (sock);
+        return error_open_failed;
+      }
+
+      state = state_e::state_opened;
+      return log_and_return ('-', "open", no_error);
 
     }
 
-    if (bytes >= 0) return bytes;
-    else            return cerr;
+    int close () {
+      if (state == state_e::state_opened) {
+        state = state_e::state_created;
+        closesocket (sock);
+        return log_and_return ('-', "close", no_error);
+      }
+      return no_error;
+    }
 
 
-  // udp<ip4,server>: wsa initialisation error
-  // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + [B bytes] + text(cerr) + [sys_answer(err)]/"\n"
+    int recv (char* buf, int buf_len) {
 
-  // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + B bytes"\n"
-  // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + B bytes"\n"
-  // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + [B bytes] + text(cerr) + [sys_answer(err)]/"\n"
-  // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + [B bytes] + text(cerr) + [sys_answer(err)]/"\n"
-  // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] bind success
-  // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] error, already opened
-  // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] error, wsa initialisation error
-  // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] socket error, system answer: bla bla bla
-  // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] bind error, system answer: bla bla bla
+      if (state       != state_e::state_opened) return log_and_return ('<', "recv", error_not_open);
+      if (socket_type == socket_type_e::server) return log_and_return ('<', "recv", error_not_allowed);
 
-  // udp<ip4,client>: [0x0002].open() ["unspecified"    -> 192.168.1.1:2000] connect success
-  // udp<ip4,client>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"   ] connect error, system answer: bla bla bla
+      int res        = ::recv (sock, buf, buf_len, 0);
+      int err        = _get_err ();
+      address_remote = _getpeername();
+      address_local  = _getsockname();
 
-  // udp<ip4,server>: [0x0002].recv() ["unspecified"    -> 192.168.1.1:2001] error, not allowed on server mode
-  // udp<ip4,server>: [0x0002].send() [192.168.1.1:2001 -> "unspecified"   ] error, not allowed on server mode
-  // udp<ip4,client>: [0x0002].recv() [192.168.1.1:2001 -> 192.168.1.1:2001] received 9 bytes
-  // udp<ip4,client>: [0x0002].recv() [192.168.1.1:2001 -> 192.168.1.1:2001] error, system answer: bla bla bla
-  // udp<ip4,client>: [0x0002].send() [192.168.1.1:2001 -> 192.168.1.1:2001] sended 7777 bytes
-  // udp<ip4,client>: [0x0002].send() [192.168.1.1:2001 -> 192.168.1.1:2001] error, system answer: bla bla bla
-  // udp<ip4,client>: [0x0002].send() [192.168.1.1:2001 -> 192.168.1.1:2001] unreachable error, system answer: bla bla bla
+      if (res == SOCKET_ERROR) return log_and_return ('<', "recv", err);
+      else                     return log_and_return ('<', "recv", no_error, "received", res);
+    }
 
-  // udp<ip4,client>: [0x0002].recvfrom() [192.168.1.1:2001 -> 192.168.1.1:2000] received 9 bytes
-  // udp<ip4,client>: [0x0002].sendto()   [192.168.1.1:2000 -> 192.168.1.1:2001] sended 7777 bytes
-  // udp<ip4,client>: [0x0002].sendto()   [192.168.1.1:2000 -> 192.168.1.1:2001] error, system answer: bla bla bla
+    int recvfrom (char* buf, int buf_len, address_t& address_from) {
 
-  }
+      if (state != state_e::state_opened) return log_and_return ('<', "recvfrom", error_not_open);
 
+      socklen_t     addr_len  = sizeof (sockaddr_in_t);
+      sockaddr_in_t addr_from = {};
+      int           res       = ::recvfrom (sock, buf, buf_len, 0, (sockaddr*)&addr_from, &addr_len);
+      int           err       = _get_err ();
+      address_remote          = sockaddr2address (addr_from);
+      address_local           = _getsockname ();
+      address_from            = address_remote;
 
+      if (res == SOCKET_ERROR) return log_and_return ('<', "recvfrom", err);
+      else                     return log_and_return ('<', "recvfrom", no_error, "received", res);
+    }
 
-  // static address conversion functions
+    int send (const char* buf, int buf_len, int flags = 0) {
 
-  static inline sockaddr_in address2sockaddr (const addr4_t& address) {
-    sockaddr_in result;
-    memset (&result, 0, sizeof (result));
-    result.sin_family = af_inet;
-    result.sin_port   = common::htonT (address.port);
-    result.sin_addr   = *((in_addr*)&address.ip);
-    return result;
-  }
+      if (state       != state_e::state_opened) return log_and_return ('>', "send", error_not_open);
+      if (socket_type == socket_type_e::server) return log_and_return ('>', "send", error_not_allowed);
 
-  static inline sockaddr_in6 address2sockaddr (const addr6_t& address) {
-    sockaddr_in6 result;
-    memset (&result, 0, sizeof (result));
-    result.sin6_family = af_inet;
-    result.sin6_port   = common::htonT (address.port);
-    result.sin6_addr   = *((in6_addr*)&address.ip);
-    return result;
-  }
+      int res        = ::send (sock, buf, buf_len, flags);
+      int err        = _get_err ();
+      address_local  = _getsockname ();
+      address_remote = _getpeername ();
 
-  static inline addr4_t sockaddr2address (const sockaddr_in& address) {
-    addr4_t result;
-    if (address.sin_family == AF_INET6) throw;
-    *((in_addr*)&result.ip) = address.sin_addr;
-    result.port             = common::ntohT (address.sin_port);
-    return result;
-  }
+      if (res == SOCKET_ERROR) return log_and_return ('>', "send", err);
+      else                     return log_and_return ('>', "send", no_error, "sended", res);
+    }
 
-  static inline addr6_t sockaddr2address (const sockaddr_in6& address) {
-    addr6_t result;
-    if (address.sin6_family == AF_INET) throw;
-    *((in6_addr*)&result.ip) = address.sin6_addr;
-    result.port              = common::ntohT (address.sin6_port);
-    return result;
-  }
+    int sendto (const char* buf, int data_len, address_t& address_to) {
+
+      if (state != state_e::state_opened) return log_and_return ('>', "sendto", error_not_open);
+
+      sockaddr_in_t addr_to = address2sockaddr (address_to);
+      int           res     = ::sendto (sock, buf, data_len, 0, (sockaddr*)&addr_to, sizeof (sockaddr_in_t));
+      int           err     = _get_err ();
+      if (type == SOCK_RAW) {
+        const ip4_t*    ip4_ptr     = (const ip4_t*)   (buf + 12);
+        const uint16_t* src_port_be = (const uint16_t*)(buf + 20);
+        address_local               = addr4_t (*ip4_ptr, common::ntohT<uint16_t> (*src_port_be));
+      }
+      else
+        address_local       = _getsockname ();
+      address_remote        = address_to;
+
+      if (res == SOCKET_ERROR) return log_and_return ('>', "sendto", err);
+      else                     return log_and_return ('>', "sendto", no_error, "sended", res);
+    }
 
 
-};
+    // processing, output and error code conversion
+
+    int log_and_return (const char dir, const char* func, int err = no_error, const char* mes = 0, int bytes = -1) {
+
+      // convert to our error code
+      int cerr;
+    
+      switch (err) {
+        #ifdef _WIN32 // WINDOWS OS
+        case WSAETIMEDOUT:     cerr = error_timeout;         break; // windows error code for timeout in recv when SO_RCVTIMEO != 0
+        case WSAEADDRNOTAVAIL: cerr = error_invalid_address; break; // error when remote address is invalid
+        case WSAECONNREFUSED:
+        case WSAECONNRESET:    cerr = error_unreachable;     break; 
+        case WSAECONNABORTED:  cerr = error_tcp_closed;      break; 
+        #else         // LINUX OS
+        case EWOULDBLOCK:      cerr = error_timeout;         break; // linux error code for timeout in recv when SO_RCVTIMEO != 0
+        case EADDRNOTAVAIL:    cerr = error_invalid_address; break; // error when remote address is invalid
+        case ECONNREFUSED:     cerr = error_unreachable;     break; 
+        case EBADF:            cerr = error_not_open;        break; // linux Bad file descriptor
+        #endif
+        default:
+          if (err > 0) cerr = error_other;
+          else         cerr = err; // if we don't understand type of error and it's error from OS (err<0) we just return error from OS
+      }
+
+      // if error is timeout trigger, it's not an error, don't show anything
+      if (cerr == error_timeout)
+        return cerr;
+
+      // show message if
+      // log_level == debug OR
+      // log_level == info AND (function in [open, close, accept] OR error exists) OR
+      // log_level == error and error exists
+      if (    log_level == log_e::debug
+          || (log_level == log_e::info  && (!strcmp (func, "open") || !strcmp (func, "close") || !strcmp (func, "accept") || cerr != no_error))
+          || (log_level == log_e::error && cerr != no_error)) {
+
+        // get error description text
+        #ifdef _WIN32 // WINDOWS OS
+          const char* sysmesl = "";
+          LPTSTR sysmes       = NULL;
+          DWORD  dwLanguageId = 0x0409; // us-en    for russian leave 0x0000;
+          DWORD  dwFlags      = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+          FormatMessageA (dwFlags, NULL, err, dwLanguageId, (LPSTR)&sysmes, 0, NULL);
+        #else         // LINUX OS
+          const char* sysmesl = "\n";
+          const char* sysmes = strerror (errno);
+        #endif
+
+        const char* ctext;
+        switch (cerr) {
+          case no_error:              ctext = "success";                            break;              
+          case error_tcp_closed:      ctext = "error, socket closed by other side"; break;
+          case error_already_opened:  ctext = "error, socket already opened";       break;
+          case error_open_failed:     ctext = "error, failed to open socket";       break;
+          case error_not_open:        ctext = "error, use closed socket";           break;
+          case error_timeout:         ctext = "receive timeout";                    break;
+          case error_unreachable:     ctext = "unreachable error";                  break;
+          case error_not_allowed:     ctext = "error, not allowed on this mode";    break;
+          case error_invalid_address: ctext = "error address";                      break;
+          default:                    ctext = "error";                              break;
+        }
+      
+        std::stringstream result;
+      
+        result << tname << ": ";
+      
+        if (sock == INVALID_SOCKET) result << "[undefined]";
+        else                        result << '[' << std::hex << sock << std::dec << ']';
+      
+        result << '.' << func << "() ";
+      
+        //if (address_local.port != 0 || address_remote.port != 0) {
+          std::string local  = (address_local.port  != 0) ? address_local.to_str ()  : "undefined";
+          std::string remote = (address_remote.port != 0) ? address_remote.to_str () : "undefined";
+          if      (dir == '>') result << "[" << local << " -> " << remote << "] ";
+          else if (dir == '<') result << "[" << local << " <- " << remote << "] ";
+          else                 result << "[" << local << " <> " << remote << "] ";
+        //}
+      
+        if (mes) result << mes << ' ';
+      
+        if      (bytes >= 0) result << bytes << " bytes\n";
+        else if (err > 0)    result << ctext << ", system answer: " << sysmes << sysmesl;
+        else                 result << ctext << std::endl;
+      
+        std::cout << result.str();
+      
+        #ifdef _WIN32 // WINDOWS OS
+          LocalFree (sysmes);
+        #endif
+
+      }
+
+      if (bytes >= 0) return bytes;
+      else            return cerr;
+
+
+    // udp<ip4,server>: wsa initialisation error
+    // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + [B bytes] + text(cerr) + [sys_answer(err)]/"\n"
+
+    // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + B bytes"\n"
+    // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + B bytes"\n"
+    // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + [B bytes] + text(cerr) + [sys_answer(err)]/"\n"
+    // tname + ": [sock]." + func + "() [" + addr_src + " -> " + addr_dst + "] " + cust_mes + [B bytes] + text(cerr) + [sys_answer(err)]/"\n"
+    // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] bind success
+    // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] error, already opened
+    // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] error, wsa initialisation error
+    // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] socket error, system answer: bla bla bla
+    // udp<ip4,server>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"] bind error, system answer: bla bla bla
+
+    // udp<ip4,client>: [0x0002].open() ["unspecified"    -> 192.168.1.1:2000] connect success
+    // udp<ip4,client>: [0x0002].open() [192.168.1.1:2000 -> "unspecified"   ] connect error, system answer: bla bla bla
+
+    // udp<ip4,server>: [0x0002].recv() ["unspecified"    -> 192.168.1.1:2001] error, not allowed on server mode
+    // udp<ip4,server>: [0x0002].send() [192.168.1.1:2001 -> "unspecified"   ] error, not allowed on server mode
+    // udp<ip4,client>: [0x0002].recv() [192.168.1.1:2001 -> 192.168.1.1:2001] received 9 bytes
+    // udp<ip4,client>: [0x0002].recv() [192.168.1.1:2001 -> 192.168.1.1:2001] error, system answer: bla bla bla
+    // udp<ip4,client>: [0x0002].send() [192.168.1.1:2001 -> 192.168.1.1:2001] sended 7777 bytes
+    // udp<ip4,client>: [0x0002].send() [192.168.1.1:2001 -> 192.168.1.1:2001] error, system answer: bla bla bla
+    // udp<ip4,client>: [0x0002].send() [192.168.1.1:2001 -> 192.168.1.1:2001] unreachable error, system answer: bla bla bla
+
+    // udp<ip4,client>: [0x0002].recvfrom() [192.168.1.1:2001 -> 192.168.1.1:2000] received 9 bytes
+    // udp<ip4,client>: [0x0002].sendto()   [192.168.1.1:2000 -> 192.168.1.1:2001] sended 7777 bytes
+    // udp<ip4,client>: [0x0002].sendto()   [192.168.1.1:2000 -> 192.168.1.1:2001] error, system answer: bla bla bla
+
+    }
+
+
+
+    // static address conversion functions
+
+    static inline sockaddr_in address2sockaddr (const addr4_t& address) {
+      sockaddr_in result;
+      memset (&result, 0, sizeof (result));
+      result.sin_family = af_inet;
+      result.sin_port   = common::htonT (address.port);
+      result.sin_addr   = *((in_addr*)&address.ip);
+      return result;
+    }
+
+    static inline sockaddr_in6 address2sockaddr (const addr6_t& address) {
+      sockaddr_in6 result;
+      memset (&result, 0, sizeof (result));
+      result.sin6_family = af_inet;
+      result.sin6_port   = common::htonT (address.port);
+      result.sin6_addr   = *((in6_addr*)&address.ip);
+      return result;
+    }
+
+    static inline addr4_t sockaddr2address (const sockaddr_in& address) {
+      addr4_t result;
+      if (address.sin_family == AF_INET6) throw;
+      *((in_addr*)&result.ip) = address.sin_addr;
+      result.port             = common::ntohT (address.sin_port);
+      return result;
+    }
+
+    static inline addr6_t sockaddr2address (const sockaddr_in6& address) {
+      addr6_t result;
+      if (address.sin6_family == AF_INET) throw;
+      *((in6_addr*)&result.ip) = address.sin6_addr;
+      result.port              = common::ntohT (address.sin6_port);
+      return result;
+    }
+
+
+    static inline bool check_and_copy (struct addrinfo* rp, ip4_t& ip) {
+      if (rp->ai_family == AF_INET) {
+        struct sockaddr_in* sin = reinterpret_cast<struct sockaddr_in*>(rp->ai_addr);
+        *((in_addr*)&ip) = sin->sin_addr;
+        return true;
+      }
+      return false;
+    }
+
+    static inline bool check_and_copy (struct addrinfo* rp, ip6_t& ip) {
+      if (rp->ai_family == AF_INET6) {
+        struct sockaddr_in6* sin6 = reinterpret_cast<struct sockaddr_in6*>(rp->ai_addr);
+        *((in6_addr*)&ip) = sin6->sin6_addr;
+        return true;
+      }
+      return false;
+    }
+
+    // Resolves a hostname to ip address.
+    static inline ip_t<Ip_type> resolve (const std::string& hostname, bool* success = nullptr, log_e log_level = log_e::error) {
+
+      ip_t<Ip_type> result = {};
+      int           family = Ip_type == v4 ? AF_INET : AF_INET6;
+      bool found = false;
+
+      #ifdef _WIN32 // WINDOWS OS
+        WSADATA wsaData;
+        if (WSAStartup (MAKEWORD (2, 2), &wsaData) != 0) {
+          if (log_level <= log_e::error) {
+            std::stringstream log_message;
+            log_message << get_tname() << ": [static].resolve()   [undefined <> undefined] ";
+            log_message << "WSAStartup() failed: " << WSAGetLastError () << std::endl;
+            std::cout << log_message.str();
+          }
+          return result;
+        }
+        if (log_level <= log_e::info) {
+          std::stringstream log_message;
+          log_message << get_tname() << ": [static].resolve()   [undefined <> undefined] ";
+          log_message << "WSAStartup() success" << std::endl;
+          std::cout << log_message.str();
+        }
+      #endif
+
+      struct addrinfo hints, *res = nullptr;
+      std::memset(&hints, 0, sizeof(hints));
+      hints.ai_family   = family;         // IPv4 or IPv6
+      hints.ai_socktype = SOCK_STREAM;    // TCP (any socktype works for getaddrinfo)
+      hints.ai_flags    = AI_NUMERICSERV; // service not needed
+
+      int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &res);
+
+      if (err == 0) {
+        for (struct addrinfo* rp = res; rp != nullptr; rp = rp->ai_next) {
+          found = check_and_copy(rp, result);
+          if (found)
+            break; // successfully copied IP address, exit loop
+        }
+        freeaddrinfo(res);
+      }
+
+      if (log_level <= log_e::info || (log_level == log_e::error && (err != 0 || found == false))) {
+
+        std::stringstream log_message;
+
+        log_message << get_tname() << ": [static].resolve()   [undefined -> " << hostname << "] ";
+        if (err != 0)            log_message << "DNS resolution failed: " << gai_strerror(err) << std::endl;
+        else if (found == false) log_message << "DNS resolution succes, but address with " << (Ip_type == v4 ? "IPv4" : "IPv6") << " type not found in DNS answer" << std::endl;
+        else                     log_message << "DNS resolution success, resolved to '" << result.to_str() << "'" << std::endl;
+
+        std::cout << log_message.str();
+
+      }
+
+      #ifdef _WIN32 // WINDOWS OS
+        WSACleanup ();
+      #endif
+
+      if (success)
+        *success = (err == 0 && found);
+
+      return result;
+    }
+
+  };
+
+} // namespace ipsockets

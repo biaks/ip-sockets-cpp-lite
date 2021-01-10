@@ -30,7 +30,7 @@ file(GLOB_RECURSE IP_SOCKETS_CPP_LITE_HEADERS *.h)
 
 add_library               (${PROJECT_NAME}     INTERFACE)
 target_sources            (${PROJECT_NAME}     INTERFACE ${IP_SOCKETS_CPP_LITE_HEADERS})
-target_include_directories(${PROJECT_NAME}     INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(${PROJECT_NAME}     INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 add_custom_target         (${PROJECT_NAME}-ide SOURCES   ${IP_SOCKETS_CPP_LITE_HEADERS})
 
 ## If this project is added as a subdirectory of another project, export the

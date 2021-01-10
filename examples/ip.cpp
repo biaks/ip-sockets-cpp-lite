@@ -1,6 +1,8 @@
 
 #include "ip.h"
 
+using namespace ipsockets;
+
 int main () {
 
   uint8_t fragment[10] = {0xff,  0xc0, 0xa8, 0x02, 0x01,  0xff,0xff,0xff,0xff,0xff};
@@ -76,8 +78,9 @@ int main () {
   ip6_t ipv6_0a { "::" };
   ip6_t ipv6_0b { "1111:2222:3333:4444:5555:6666:192.168.24.1" };
   ip6_t ipv6_0c { "::1.2.3.4" };
-  ip6_t ipv6_0d { ip4_t { 0xc0, 0xa8, 0x01, 0x02 } };
-  ip6_t ipv6_0e { std::array<uint8_t, 4> ({ 0xc0, 0xa8, 0x01, 0x02 }) };
+  ip6_t ipv6_0d { "1.2.3.4" };
+  ip6_t ipv6_0e { ip4_t { 0xc0, 0xa8, 0x01, 0x02 } };
+  ip6_t ipv6_0f { std::array<uint8_t, 4> ({ 0xc0, 0xa8, 0x01, 0x02 }) };
 
   ip6_t ipv6_12 = std::array<uint8_t, 16> ({ 0x11, 0x11, 0x22, 0x22, 0x33, 0x33, 0x44, 0x44, 0x55, 0x55, 0x66, 0x66, 0x77, 0x77, 0x88, 0x88 }); (void)ipv6_12;
   ip6_t ipv6_13 = { 0x1111, 0x2222, 0x3333, 0x4444, 0x5555, 0x6666, 0x7777, 0x8888 };                                                           (void)ipv6_13;
@@ -123,6 +126,7 @@ int main () {
   std::cout << ip6_t { "::" } << '\n';
   std::cout << ip6_t { "1111:2222:3333:4444:5555:6666:255.255.255.255" } << '\n';
   std::cout << ip6_t { "::192.168.24.1" } << '\n';
+  std::cout << ip6_t { "192.168.24.1" } << '\n';
   std::cout << ip6_t { ip4_t { 0xc0, 0xa8, 0x01, 0x02 } } << '\n';
   std::cout << ip6_t { std::array<uint8_t, 4> ({ 0xc0, 0xa8, 0x01, 0x02 }) } << '\n';
 

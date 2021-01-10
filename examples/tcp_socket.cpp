@@ -1,16 +1,21 @@
 
+// my tiny header only crossplatform library for working with ip sockets
 #include "tcp_socket.h"
+
 #include <thread>
 #include <chrono>
+#include <cstdio>
 
-#if 1
+using namespace ipsockets;
+
+#if true
+// server and client work on ipv4 mode
 static const ip_type_e cfg_ip_type = v4;
-using                  cfg_addr_t  = addr4_t;
 static const addr4_t   cfg_server  = "127.0.0.1:2000";
 static const addr4_t   cfg_client  = "127.0.0.1:2000";
 #else
+// server and client work on ipv6 mode
 static const ip_type_e cfg_ip_type = v6;
-using                  cfg_addr_t  = addr6_t;
 static const addr6_t   cfg_server  = "[::1]:2000";
 static const addr6_t   cfg_client  = "[::1]:2000";
 #endif
@@ -18,88 +23,107 @@ static const addr6_t   cfg_client  = "[::1]:2000";
 using tcp_server_t = tcp_socket_t<cfg_ip_type, socket_type_e::server>;
 using tcp_client_t = tcp_socket_t<cfg_ip_type, socket_type_e::client>;
 
+// Handles a single client connection.
+// All accepted connections will be automatically closed when will be closed main server connection
+// so this thread with this function also will be finish
 void accepted_client_func (tcp_client_t accepted_client) {
 
   while (true) {
     char buf[1000];
     int res = accepted_client.recv (buf, 1000);
-    if (res == tcp_server_t::error_timeout) {
-      // nothing
-    }
-    else if (res == tcp_server_t::error_unreachable) {
-      // nothing
-    }
-    else if (res == 0) {
-      // closed by client
-      return;
-    }
-    else if (res > 0) {
-      // success
-      std::this_thread::sleep_for (std::chrono::seconds (2));
-      printf ("%s\n", buf);
+
+    if (res > 0) { // success
+      buf[res] = '\0'; // ensure null termination for safe printing
+      printf ("server for accepted connection received: %s\n", buf); // print received data
+      std::this_thread::sleep_for (std::chrono::seconds (1)); // simulate some processing delay
       accepted_client.send ("answer\0", 7);
     }
+    else if (res == ipsockets::error_timeout)
+      printf ("server for accepted connection: recv timeout\n");
+    else if (res == ipsockets::error_unreachable)
+      printf ("server for accepted connection: client unreachable\n");
+    else if (res == ipsockets::error_tcp_closed) {
+      printf ("server for accepted connection: client closed connection\n");
+      return;
+    }
   }
-  printf ("shutdown accepted_client\n");
+  printf ("shutdown server for accepted connection\n");
 }
 
+// Simple server loop accepting connections.
+// Each connection is handled in a detached thread.
+bool shutdown_server = false;
+tcp_server_t server_sock (log_e::debug);
 void server_func () {
-  tcp_server_t sock (tcp_server_t::log_e::debug);
-  if (sock.open (cfg_server) == tcp_server_t::no_error) {
-    cfg_addr_t accepted_client_addr;
+  if (server_sock.open (cfg_server) == ipsockets::no_error) {
+    addr_t<cfg_ip_type> accepted_client_addr;
 
-    std::vector<std::thread> accepted_clients;
+    while (shutdown_server == false) {
 
-    while (true) {
-
-      tcp_client_t accepted_client = sock.accept (accepted_client_addr);
-      if (accepted_client.state == tcp_client_t::state_opened) {
+      // accept() waiting new connections until server socket will be closed
+      tcp_client_t accepted_client = server_sock.accept (accepted_client_addr);
+      if (accepted_client.state == state_e::state_opened) {
+        // fire-and-forget thread for this connection
+        printf ("server: accept new connection\n");
         std::thread accepted_thread = std::thread (accepted_client_func, std::move (accepted_client));
-        accepted_clients.emplace_back (std::move (accepted_thread));
+        accepted_thread.detach();
       }
+      else
+        printf ("server: accepting new connections timeout\n");
 
     }
   }
+  printf ("server shutdown\n");
 }
 
+
+// Simple client sending periodic requests.
 void client_func () {
-  tcp_client_t sock (tcp_client_t::log_e::debug);
-  if (sock.open (cfg_client) == tcp_client_t::no_error) {
+  tcp_client_t sock (log_e::debug);
+  if (sock.open (cfg_client) == ipsockets::no_error) {
 
     for (size_t i = 0; i < 5; i++) {
       std::this_thread::sleep_for (std::chrono::seconds (4));
       if (sock.send ("hello\0", 6) >= 0) {
+        printf ("client send 'hello\\0' success\n");
         char buf[1000];
         int  res = sock.recv (buf, 1000);
-        if      (res == tcp_client_t::error_timeout) {
-          // nothing
+        if (res > 0) { // success
+          buf[res] = '\0';
+          printf ("client received: %s\n", buf);
         }
-        else if (res == tcp_client_t::error_unreachable) {
-          // nothing
-        }
-        else if (res == 0) {
-          // ???
-          printf ("recv zero\n");
-        }
-        else if (res > 0) {
-          // success
-          printf ("%s\n", buf);
-        }
+        else if (res == ipsockets::error_timeout)
+          printf ("client: send timeout\n");
+        else if (res == ipsockets::error_unreachable)
+          printf ("client: server unreachable\n");
+        else if (res == ipsockets::error_tcp_closed)
+          printf ("client: server closed connection\n");
       }
     }
 
   }
-  printf ("shutdown client\n");
+  printf ("client shutdown\n");
 }
+
 
 int main () {
 
+  // start server and client in parallel
   std::thread server (server_func);
   std::thread client (client_func);
 
-  server.join ();
-  //client.join ();
+  // wait for client is finish
+  client.join ();
 
+  // wait for server is finish
+  shutdown_server = true;
+  server_sock.close();
+  server.join ();
+
+  // wait 1 sec for shutdown accepted connetions
+  std::this_thread::sleep_for (std::chrono::seconds (1));
+
+  printf ("demo app shutdown\n");
   return 0;
 
 }

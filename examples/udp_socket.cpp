@@ -3,61 +3,64 @@
 #include <thread>
 #include <chrono>
 
-#if 1
+using namespace ipsockets;
+
+#if true
+// server and client work on ipv4 mode
 static const ip_type_e cfg_ip_type = v4;
-using                  cfg_addr_t  = addr4_t;
 static const addr4_t   cfg_server  = "127.0.0.1:2000";
 static const addr4_t   cfg_client  = "127.0.0.1:2000";
 #else
+// server and client work on ipv6 mode
 static const ip_type_e cfg_ip_type = v6;
-using                  cfg_addr_t  = addr6_t;
 static const addr6_t   cfg_server  = "[::1]:2000";
 static const addr6_t   cfg_client  = "[::1]:2000";
 #endif
 
+using udp_server_t = udp_socket_t<cfg_ip_type, socket_type_e::server>;
+using udp_client_t = udp_socket_t<cfg_ip_type, socket_type_e::client>;
+
+// Simple server loop accepting connections.
+bool shutdown_server = false;
 void server_func () {
-  using udp_server_t = udp_socket_t<cfg_ip_type, socket_type_e::server>;
-  udp_server_t sock (udp_server_t::log_e::debug);
-  if (sock.open (cfg_server) == udp_server_t::no_error) {
-    cfg_addr_t client_addr;
+  udp_server_t sock (log_e::debug);
+  if (sock.open (cfg_server) == ipsockets::no_error) {
+    addr_t<cfg_ip_type> client_addr;
     char   buf[1000];
-    while (true) {
+    while (shutdown_server == false) {
       int res = sock.recvfrom (buf, 1000, client_addr);
-      if      (res == udp_server_t::error_timeout) {
-        // nothing
-      }
-      else if (res == udp_server_t::error_unreachable) {
-        // nothing
-      }
-      else if (res >= 0) {
-        // success
-        printf ("%s\n", buf);
+      if (res >= 0) {  // success
+        printf ("server received: %s\n", buf); // print received data
         sock.sendto ("answer\0", 7, client_addr);
       }
+      else if (res == ipsockets::error_timeout)
+        printf ("server: recv timeout\n");
+      else if (res == ipsockets::error_unreachable)
+        printf ("server: client unreachable\n");
     }
   }
+  printf ("server shutdown\n");
 }
 
+// Simple client sending periodic requests.
 void client_func () {
-  using udp_client_t = udp_socket_t<cfg_ip_type, socket_type_e::client>;
-  udp_client_t sock (udp_client_t::log_e::debug);
-  if (sock.open (cfg_client) == udp_client_t::no_error) {
+  udp_client_t sock (log_e::debug);
+  if (sock.open (cfg_client) == ipsockets::no_error) {
 
     for (size_t i = 0; i < 2; i++) {
       std::this_thread::sleep_for (std::chrono::seconds (1));
       if (sock.send ("hello\0", 6) >= 0) {
+        printf ("client send 'hello\\0' success\n");
         char buf[1000];
         int  res = sock.recv (buf, 1000);
-        if      (res == udp_client_t::error_timeout) {
-          // nothing
+        if (res > 0) { // success
+          buf[res] = '\0';
+          printf ("client received: %s\n", buf);
         }
-        else if (res == udp_client_t::error_unreachable) {
-          // nothing
-        }
-        else if (res >= 0) {
-          // success
-          printf ("%s\n", buf);
-        }
+        else if (res == ipsockets::error_timeout)
+          printf ("client: send timeout\n");
+        else if (res == ipsockets::error_unreachable)
+          printf ("client: server unreachable\n");
       }
     }
 
@@ -66,12 +69,18 @@ void client_func () {
 
 int main () {
 
+  // start server and client in parallel
   std::thread server (server_func);
   std::thread client (client_func);
 
-  server.join ();
+  // wait for client is finish
   client.join ();
 
+  // wait for server is finish
+  shutdown_server = true;
+  server.join ();
+
+  printf ("demo app shutdown\n");
   return 0;
 
 }
