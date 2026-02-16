@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.12)
 project(ip-sockets-cpp-lite)
 
-option(IP_SOCKETS_CPP_LITE_BUILD_EXAMPLES "Build with examples" OFF)
+option(IP_SOCKETS_CPP_LITE_BUILD_EXAMPLES "Build with examples" ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 

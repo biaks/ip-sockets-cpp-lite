@@ -2,7 +2,7 @@
  * ip-sockets-cpp-lite — header-only C++ networking utilities
  * https://github.com/biaks/ip-sockets-cpp-lite
  * 
- * Copyright (c) 2020 biaks ianiskr@gmail.com
+ * Copyright (c) 2021 Yan Kryukov ianiskr@gmail.com
  * Licensed under the MIT License
  */
 
@@ -152,16 +152,16 @@ namespace ipsockets {
   };
 
   enum error_e {
-    no_error              =  0,
-    error_tcp_closed      = -1, // tcp socket closed by other side
-    error_already_opened  = -2,
-    error_open_failed     = -3,
-    error_not_open        = -4,
-    error_timeout         = -5,
-    error_unreachable     = -6,
-    error_not_allowed     = -7,
-    error_invalid_address = -8,
-    error_other           = -9
+    no_error                 =  0,
+    error_tcp_closed         = -1, // tcp socket closed by other side
+    error_already_opened     = -2,
+    error_open_failed        = -3,
+    error_closed_or_not_open = -4,
+    error_timeout            = -5,
+    error_unreachable        = -6,
+    error_not_allowed        = -7,
+    error_invalid_address    = -8,
+    error_other              = -9
   };
 
   template <ip_type_e Ip_type>
@@ -208,6 +208,8 @@ namespace ipsockets {
 
     std::string tname = get_tname();
 
+    ///	@brief Constructor for UDP socket.
+    ///	@param log_level_ - Logging level for this socket instance (default: log_e::info).
     udp_socket_t (log_e log_level_ = log_e::info) : log_level (log_level_) {
       #ifdef _WIN32 // WINDOWS OS - to prevent compiler from discarding this object, reference it here
         ensure_wsa();
@@ -252,6 +254,21 @@ namespace ipsockets {
       #endif
     }
 
+    ///	@brief Opens a UDP socket and binds it to a local address (server) or connects to a remote address (client).
+    ///	@param address    - The address to bind to (for server) or connect to (for client).
+    ///	@param timeout_ms - Receive timeout in milliseconds (default: 1000).
+    ///	@return Error code:
+    ///	  - no_error on success
+    ///	  - error_already_opened if socket is already opened
+    ///	  - error_open_failed if socket creation fails
+    ///	  - error_not_allowed if setsockopt operations fail
+    ///	  - error_other for other errors
+    ///	@details For server sockets:
+    ///	  - Binds to the specified local address:port
+    ///	  - Sets SO_REUSEADDR option to allow multiple listeners
+    ///	@details For client sockets:
+    ///	  - Connects to the specified remote address:port
+    ///	  - Kernel automatically assigns local address:port
     int open (const address_t& address, uint32_t timeout_ms = 1000) {
 
       if (state == state_e::state_opened)     return log_and_return ('-', "open", error_already_opened);
@@ -334,6 +351,10 @@ namespace ipsockets {
 
     }
 
+    ///	@brief Closes the UDP socket if it's currently open.
+    ///	@return always no_error.
+    ///	@details Resets socket state to state_created and invalidates the socket descriptor.
+    ///	Automatically called by destructor.
     int close () {
       if (state == state_e::state_opened) {
         state = state_e::state_created;
@@ -343,10 +364,20 @@ namespace ipsockets {
       return no_error;
     }
 
-
+    ///	@brief Receives data on a connected client socket.
+    ///	@param[out] buf     - Buffer to store received data.
+    ///	@param      buf_len - Maximum number of bytes to receive.
+    ///	@return Number of bytes received on success, or error code:
+    ///	  - error_closed_or_not_open if socket not opened
+    ///	  - error_not_allowed if called on server socket
+    ///	  - error_timeout on receive timeout
+    ///	  - error_tcp_closed if connection closed by peer
+    ///	  - error_other for other errors
+    ///	@pre Socket must be opened in client mode and connected to a remote peer.
+    ///	@note Updates address_local and address_remote member variables.
     int recv (char* buf, int buf_len) {
 
-      if (state       != state_e::state_opened) return log_and_return ('<', "recv", error_not_open);
+      if (state       != state_e::state_opened) return log_and_return ('<', "recv", error_closed_or_not_open);
       if (socket_type == socket_type_e::server) return log_and_return ('<', "recv", error_not_allowed);
 
       int res        = ::recv (sock, buf, buf_len, 0);
@@ -358,9 +389,20 @@ namespace ipsockets {
       else                     return log_and_return ('<', "recv", no_error, "received", res);
     }
 
+    ///	@brief Receives data on a socket and captures the sender's address.
+    ///	@param[out] buf          - Buffer to store received data.
+    ///	@param      buf_len      - Maximum number of bytes to receive.
+    ///	@param[out] address_from - Output parameter. Filled with the sender's address.
+    ///	@return Number of bytes received on success, or error code:
+    ///	  - error_closed_or_not_open if socket not opened
+    ///	  - error_timeout on receive timeout
+    ///	  - error_unreachable if destination unreachable
+    ///	  - error_other for other errors
+    ///	@details Can be used on both server and client sockets.
+    ///	Updates address_local and address_remote member variables.
     int recvfrom (char* buf, int buf_len, address_t& address_from) {
 
-      if (state != state_e::state_opened) return log_and_return ('<', "recvfrom", error_not_open);
+      if (state != state_e::state_opened) return log_and_return ('<', "recvfrom", error_closed_or_not_open);
 
       socklen_t     addr_len  = sizeof (sockaddr_in_t);
       sockaddr_in_t addr_from = {};
@@ -374,9 +416,20 @@ namespace ipsockets {
       else                     return log_and_return ('<', "recvfrom", no_error, "received", res);
     }
 
+    ///	@brief Sends data on a connected client socket.
+    ///	@param buf     - Buffer containing data to send.
+    ///	@param buf_len - Number of bytes to send.
+    ///	@param flags   - Optional flags for send operation (default: 0).
+    ///	@return Number of bytes sent on success, or error code:
+    ///	  - error_closed_or_not_open if socket not opened
+    ///	  - error_not_allowed if called on server socket
+    ///	  - error_unreachable if destination unreachable
+    ///	  - error_other for other errors
+    ///	@pre Socket must be opened in client mode and connected to a remote peer.
+    ///	@note Updates address_local and address_remote member variables.
     int send (const char* buf, int buf_len, int flags = 0) {
 
-      if (state       != state_e::state_opened) return log_and_return ('>', "send", error_not_open);
+      if (state       != state_e::state_opened) return log_and_return ('>', "send", error_closed_or_not_open);
       if (socket_type == socket_type_e::server) return log_and_return ('>', "send", error_not_allowed);
 
       int res        = ::send (sock, buf, buf_len, flags);
@@ -388,9 +441,21 @@ namespace ipsockets {
       else                     return log_and_return ('>', "send", no_error, "sended", res);
     }
 
+    ///	@brief Sends data to a specified destination address.
+    ///	@param buf        - Buffer containing data to send.
+    ///	@param data_len   - Number of bytes to send.
+    ///	@param address_to - Destination address.
+    ///	@return Number of bytes sent on success, or error code:
+    ///	  - error_closed_or_not_open if socket not opened
+    ///	  - error_invalid_address if destination address is invalid
+    ///	  - error_unreachable if destination unreachable
+    ///	  - error_other for other errors
+    ///	@details Can be used on both server and client sockets.
+    ///	For raw sockets, extracts source address from IP header.
+    ///	Updates address_local and address_remote member variables.
     int sendto (const char* buf, int data_len, address_t& address_to) {
 
-      if (state != state_e::state_opened) return log_and_return ('>', "sendto", error_not_open);
+      if (state != state_e::state_opened) return log_and_return ('>', "sendto", error_closed_or_not_open);
 
       sockaddr_in_t addr_to = address2sockaddr (address_to);
       int           res     = ::sendto (sock, buf, data_len, 0, (sockaddr*)&addr_to, sizeof (sockaddr_in_t));
@@ -398,7 +463,7 @@ namespace ipsockets {
       if (type == SOCK_RAW) {
         const ip4_t*    ip4_ptr     = (const ip4_t*)   (buf + 12);
         const uint16_t* src_port_be = (const uint16_t*)(buf + 20);
-        address_local               = addr4_t (*ip4_ptr, common::ntohT<uint16_t> (*src_port_be));
+        address_local               = addr4_t (*ip4_ptr, orders::ntohT<uint16_t> (*src_port_be));
       }
       else
         address_local       = _getsockname ();
@@ -427,7 +492,7 @@ namespace ipsockets {
         case EWOULDBLOCK:      cerr = error_timeout;         break; // linux error code for timeout in recv when SO_RCVTIMEO != 0
         case EADDRNOTAVAIL:    cerr = error_invalid_address; break; // error when remote address is invalid
         case ECONNREFUSED:     cerr = error_unreachable;     break; 
-        case EBADF:            cerr = error_not_open;        break; // linux Bad file descriptor
+        case EBADF:            cerr = error_closed_or_not_open;        break; // linux Bad file descriptor
         #endif
         default:
           if (err > 0) cerr = error_other;
@@ -464,7 +529,7 @@ namespace ipsockets {
           case error_tcp_closed:      ctext = "error, socket closed by other side"; break;
           case error_already_opened:  ctext = "error, socket already opened";       break;
           case error_open_failed:     ctext = "error, failed to open socket";       break;
-          case error_not_open:        ctext = "error, use closed socket";           break;
+          case error_closed_or_not_open:        ctext = "error, use closed socket";           break;
           case error_timeout:         ctext = "receive timeout";                    break;
           case error_unreachable:     ctext = "unreachable error";                  break;
           case error_not_allowed:     ctext = "error, not allowed on this mode";    break;
@@ -545,7 +610,7 @@ namespace ipsockets {
       sockaddr_in result;
       memset (&result, 0, sizeof (result));
       result.sin_family = af_inet;
-      result.sin_port   = common::htonT (address.port);
+      result.sin_port   = orders::htonT (address.port);
       result.sin_addr   = *((in_addr*)&address.ip);
       return result;
     }
@@ -554,7 +619,7 @@ namespace ipsockets {
       sockaddr_in6 result;
       memset (&result, 0, sizeof (result));
       result.sin6_family = af_inet;
-      result.sin6_port   = common::htonT (address.port);
+      result.sin6_port   = orders::htonT (address.port);
       result.sin6_addr   = *((in6_addr*)&address.ip);
       return result;
     }
@@ -563,7 +628,7 @@ namespace ipsockets {
       addr4_t result;
       if (address.sin_family == AF_INET6) throw;
       *((in_addr*)&result.ip) = address.sin_addr;
-      result.port             = common::ntohT (address.sin_port);
+      result.port             = orders::ntohT (address.sin_port);
       return result;
     }
 
@@ -571,7 +636,7 @@ namespace ipsockets {
       addr6_t result;
       if (address.sin6_family == AF_INET) throw;
       *((in6_addr*)&result.ip) = address.sin6_addr;
-      result.port              = common::ntohT (address.sin6_port);
+      result.port              = orders::ntohT (address.sin6_port);
       return result;
     }
 
@@ -594,7 +659,15 @@ namespace ipsockets {
       return false;
     }
 
-    // Resolves a hostname to ip address.
+    ///	@brief Resolves a hostname to an IP address using DNS.
+    ///	@param      hostname  - Hostname to resolve (e.g., "example.com").
+    ///	@param[out] success   - Optional output flag. If non-null, set to true on successful resolution, false on failure.
+    ///	@param      log_level - Logging level for DNS resolution messages (default: log_e::error).
+    ///	@return ip_t<Ip_type> Resolved IP address. Returns empty IP (all zeros) on failure.
+    ///	@details Performs DNS lookup using getaddrinfo():
+    ///	  - For IPv4 sockets (Ip_type = v4) resolves to IPv4 addresses only
+    ///	  - For IPv6 sockets (Ip_type = v6) resolves to IPv6 addresses only
+    ///	  - Returns the first matching address found in DNS response
     static inline ip_t<Ip_type> resolve (const std::string& hostname, bool* success = nullptr, log_e log_level = log_e::error) {
 
       ip_t<Ip_type> result = {};

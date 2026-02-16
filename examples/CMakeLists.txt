@@ -5,7 +5,7 @@ if(NOT WIN32)
 endif()
 
 add_executable       (ip_address "ip_address.cpp")
-target_link_libraries(ip ip-sockets-cpp-lite)
+target_link_libraries(ip_address ip-sockets-cpp-lite)
 
 add_executable       (udp_socket "udp_socket.cpp")
 target_link_libraries(udp_socket  ip-sockets-cpp-lite)

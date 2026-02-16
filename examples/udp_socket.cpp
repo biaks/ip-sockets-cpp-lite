@@ -6,12 +6,12 @@
 using namespace ipsockets;
 
 #if true
-// server and client work on ipv4 mode
+// server and client work on IPv4 mode
 static const ip_type_e cfg_ip_type = v4;
 static const addr4_t   cfg_server  = "127.0.0.1:2000";
 static const addr4_t   cfg_client  = "127.0.0.1:2000";
 #else
-// server and client work on ipv6 mode
+// server and client work on IPv6 mode
 static const ip_type_e cfg_ip_type = v6;
 static const addr6_t   cfg_server  = "[::1]:2000";
 static const addr6_t   cfg_client  = "[::1]:2000";

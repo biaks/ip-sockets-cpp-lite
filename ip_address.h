@@ -3,7 +3,7 @@
  * ip-sockets-cpp-lite — header-only C++ networking utilities
  * https://github.com/biaks/ip-sockets-cpp-lite
  * 
- * Copyright (c) 2021 biaks ianiskr@gmail.com
+ * Copyright (c) 2021 Yan Kryukov ianiskr@gmail.com
  * Licensed under the MIT License
  */
 
@@ -99,6 +99,19 @@ namespace orders {
 namespace ipsockets {
 
   struct ip4_t : public std::array<uint8_t, 4> {
+    /// @brief Parses a text string with an IP address according to the rules.
+    /// The string can contain from one to four numbers separated by dots.
+    /// Each number can be encoded as HEX (hexadecimal number) or as DEC (decimal number).
+    /// If there is one number, it is interpreted as uint32 (i.e., one number contains the entire ip address).
+    /// If there are 2 to 4 numbers, they are interpreted as values of individual address octets, empty octets are filled with zeros.
+    /// The IP address value is stored in the std::array<uint8_t, 4> array from high byte to low byte (big endian).
+    /// If parsing fails, the result will be 0.0.0.0. To get confirmation of successful parsing, pass a pointer to a bool variable
+    /// as the success parameter, which will be set to true in case of successful parsing.
+    /// @param value   - pointer to the string with the ip address, it can be null-terminated or not, in the second case, the length parameter should be set correctly.
+    /// @param length  - length of the string with the ip address, if the string is null-terminated, then this parameter can be left as default.
+    /// @param success - optional parameter for confirming successful parsing.
+    /// @return reference to the current object with the parsed ip address, in case of parsing failure, the result will be 0.0.0.0
+    /// @details Possibly examples:
     /// "192.168.2.1"
     /// "192.0xa8.2.0x1"
     /// "0xc0a80201"
@@ -184,6 +197,18 @@ namespace ipsockets {
       return *this;
     }
 
+    /// @brief Parses a text string with an IP address according to the rules.
+    /// The string can contain from one to four numbers separated by dots.
+    /// Each number can be encoded as HEX (hexadecimal number) or as DEC (decimal number).
+    /// If there is one number, it is interpreted as uint32 (i.e., one number contains the entire ip address).
+    /// If there are 2 to 4 numbers, they are interpreted as values of individual address octets, empty octets are filled with zeros.
+    /// The IP address value is stored in the std::array<uint8_t, 4> array from high byte to low byte (big endian).
+    /// If parsing fails, the result will be 0.0.0.0. To get confirmation of successful parsing, pass a pointer to a bool variable
+    /// as the success parameter, which will be set to true in case of successful parsing.
+    /// @param value   - std::string with the ip address
+    /// @param success - optional parameter for confirming successful parsing.
+    /// @return reference to the current object with the parsed ip address, in case of parsing failure, the result will be 0.0.0.0
+    /// @details Possibly examples:
     /// "192.168.2.1"
     /// "192.0xa8.2.0x1"
     /// "0xc0a80201"
@@ -260,6 +285,8 @@ namespace ipsockets {
       std::swap ((*this)[1], (*this)[2]);
     }
 
+    /// @brief Converts ipv4 address to text representation.
+    /// @return text representation of ipv4 address
     std::string to_str () const {
       return std::to_string ((*this)[0]) + '.' + std::to_string ((*this)[1]) + '.' + std::to_string ((*this)[2]) + '.' + std::to_string ((*this)[3]);
     }
@@ -291,6 +318,17 @@ namespace ipsockets {
 
   struct ip6_t : public std::array<uint8_t, 16> {
 
+    /// @brief Parses a text string with an IP address according to the rules.
+    /// The string can contain from zero to eight HEX (hexadecimal) numbers separated by ':'.
+    /// Additionally, compression of one or more zero numbers using '::' is supported
+    /// Also, notation with an ipv4 address instead of the last two numbers is supported. The ipv4 address can only be written with decimal digits.
+    /// If parsing fails, the result will be '::'. To get confirmation of successful parsing, pass a pointer to a bool variable
+    /// as the success parameter, which will be set to true in case of successful parsing.
+    /// @param value   - pointer to the string with the ip address, it can be null-terminated or not, in the second case, the length parameter should be set correctly.
+    /// @param length  - length of the string with the ip address, if the string is null-terminated, then this parameter can be left as default.
+    /// @param success - optional parameter for confirming successful parsing.
+    /// @return reference to the current object with the parsed ip address, in case of parsing failure, the result will be '::'
+    /// @details Possibly examples:
     /// "5555:6666:7777:8888:9999:aaaa:bbbb:cccc"
     /// "1:2:3:4:5:6:7:8"
     /// "1::5:6:7:8"
@@ -410,6 +448,16 @@ namespace ipsockets {
       return *this;
     }
 
+    /// @brief Parses a text string with an IP address according to the rules.
+    /// The string can contain from zero to eight HEX (hexadecimal) numbers separated by ':'.
+    /// Additionally, compression of one or more zero numbers using '::' is supported
+    /// Also, notation with an ipv4 address instead of the last two numbers is supported. The ipv4 address can only be written with decimal digits.
+    /// If parsing fails, the result will be '::'. To get confirmation of successful parsing, pass a pointer to a bool variable
+    /// as the success parameter, which will be set to true in case of successful parsing.
+    /// @param value   - string with the ip address.
+    /// @param success - optional parameter for confirming successful parsing.
+    /// @return reference to the current object with the parsed ip address, in case of parsing failure, the result will be '::'
+    /// @details Possibly examples:
     /// "5555:6666:7777:8888:9999:aaaa:bbbb:cccc"
     /// "1:2:3:4:5:6:7:8"
     /// "1::5:6:7:8"
@@ -514,6 +562,12 @@ namespace ipsockets {
       return *this;
     }
 
+    /// @brief Converts ipv6 address to text representation.
+    /// Supports optional address compression and optional output of the last two groups as an IPv4 address,
+    /// always outputting the special case of ip4-over-ip6 as '::ffff:x.x.x.x' string.
+    /// @param reduction - enable address compression (replacing empty groups with '::')
+    /// @param embedded_ipv4 - enable force representation of last two groups as ipv4 address
+    /// @return text representation of ipv6 address
     std::string to_str (bool reduction = true, bool embedded_ipv4 = false) const {
 
       std::string                result;

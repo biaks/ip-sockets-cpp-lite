@@ -1,178 +1,210 @@
+# ip-sockets-cpp-lite 🔌
 
-# ip-sockets-cpp-lite
+**Simplicity. Lightweight. Cross-platform.**
 
-A lightweight, header-only C++ networking utility library providing unified IP address handling and cross-platform UDP/TCP socket abstractions.
-
-The library is designed to be simple, dependency-free, and easy to integrate into existing C++ projects.
-
-## Key Features
-
-- Header-only library
-- Written in pure C++
-- Cross-platform (Linux, Windows, macOS)
-- No third-party dependencies
-- Minimalistic and low-level design
-- Very easy to integrate and use
-- Optional CMake integration
-- Can be used by simply including headers
-- Unified IPv4 / IPv6 handling
-- Cross-platform UDP and TCP socket wrappers
-- Suitable for embedded, tools, services, and low-level networking code
-
-## Components
-
-The library consists of three main headers:
-
-### `ip.h`
-Unified IPv4 and IPv6 address and prefix handling:
-
-- IPv4 and IPv6 address types
-- Text ↔ binary conversion
-- Native storage using `std::array<>`
-- IPv4-over-IPv6 mapping
-- Network prefix handling and masking
-- Binary network prefix format
-- Address + port types (`addr4_t`, `addr6_t`)
-- Rich constructors and implicit/explicit conversions
-- Bitwise operations and comparisons
-
-### `udp_socket.h`
-Cross-platform UDP socket abstraction:
-
-- Unified client and server modes
-- IPv4 and IPv6 support
-- Synchronous I/O with configurable timeouts
-- Polling-based asynchronous mode
-- Explicit socket state and error handling
-- Cross-platform API (POSIX / Windows)
-
-### `tcp_socket.h`
-TCP socket abstraction built on top of `udp_socket.h`:
-
-- Unified TCP client and server
-- Blocking I/O with timeouts
-- Accept loop helpers
-- Explicit connection state handling
-- Same API style as UDP for consistency
-
-## Requirements
-
-- C++11 or newer
-- Standard C++ library
-- No external dependencies
-
-## Integration
-
-### Option 1 — Header-only (simplest)
-
-Just copy the headers into your project and include one of them:
+ip-sockets-cpp-lite is a fast, header-only, dependency-free, cross-platform C++ library that makes programming UDP/TCP sockets and working with IPv4/IPv6 addresses as easy as possible.
+Forget about endless `getaddrinfo` calls, confusion with `sockaddr_in`/`sockaddr_in6`, and platform-specific workarounds.
 
 ```cpp
-#include "ip.h"          // if you need only ip logic
-#include "udp_socket.h"  // if you need udp socket
-#include "tcp_socket.h"  // if you need tcp socket
+// Send a UDP packet? One line!
+udp_socket_t<v4, client> sock;
+sock.open("192.168.1.100:8080");
+sock.send("Hello!", 6);
 ```
 
-No build system changes required.
+## Why ip-sockets-cpp-lite? ✨
 
-### Option 2 — CMake (optional)
+- **📦 Header-only** - just copy the headers into your project and start coding
+- **🎯 Zero dependencies** - only the C++ standard library
+- **🖥️ Cross-platform** - Linux, Windows, macOS - same code everywhere
+- **🚀 Minimal learning curve** - up and running in 5 minutes
+- **🪶 Lightweight** - no magic, just what you need
+- **🔒 Predictable** - full control over everything
+- **📋 Human-readable errors** - clear error codes instead of cryptic errno values
 
-You can also add the library as a subdirectory and link it via CMake.
+## Quick Start 🏁
 
-## Quick Examples
+### 1. Installation
 
-### IPv4 / IPv6 address handling
+Simply copy three files into your project:
+- `ip_address.h` — IP address handling
+- `udp_socket.h` — UDP sockets
+- `tcp_socket.h` — TCP sockets
 
+Then include one of what you need:
 ```cpp
-#include "ip.h"
-
-int main() {
-    ip4_t ip4 = "192.168.1.10";
-    ip6_t ip6 = "2001:db8::1";
-
-    std::cout << ip4 << std::endl;
-    std::cout << ip6 << std::endl;
-
-    // Convert IPv4 to IPv6 (IPv4-mapped IPv6)
-    ip6_t ip6_from_v4 = ip4;
-
-    // Apply network mask
-    ip4_t network = ip4 & ip4_t{255, 255, 255, 0};
-
-    // Address + port
-    addr4_t addr4 = "192.168.1.10:8080";
-    addr6_t addr6 = "[::1]:8080";
-
-    std::cout << addr4 << std::endl;
-    std::cout << addr6 << std::endl;
-}
+#include "ip_address.h"  // work only with ipv4/ipv6 addresses
+#include "udp_socket.h"  // work with UDP ipv4/ipv6 client/server sockets
+#include "tcp_socket.h"  // work with TCP ipv4/ipv6 client/server sockets
 ```
 
-### Simple UDP server
+### 2. Send a UDP message
 
 ```cpp
 #include "udp_socket.h"
-
-using server_t = udp_socket_t<v4, socket_type_e::server>;
+using namespace ipsockets;
 
 int main() {
-    server_t server(server_t::log_e::info);
 
-    if (server.open("0.0.0.0:2000") != server_t::no_error) {
-        return 1;
+    // Create a UDP client (IPv4)
+    udp_socket_t<v4, socket_type_e::client> sock;
+    
+    // Connect to server
+    if (sock.open("192.168.1.100:8080") == no_error) {
+
+        // Send a message
+        sock.send("Hello, world!", 13);
+    
+        // Receive response
+        char buffer[1024];
+        int bytes = sock.recv(buffer, sizeof(buffer));
+        if (bytes > 0)
+            std::cout << "Received: " << std::string(buffer, bytes) << '\n';
+
     }
+    
+    return 0;
+}
+```
 
-    char buffer[1024];
-    addr4_t client;
+### 3. Simple UDP server
 
-    while (true) {
-        int res = server.recvfrom(buffer, sizeof(buffer), client);
-        if (res > 0) {
-            server.sendto("ok", 2, client);
+```cpp
+#include "udp_socket.h"
+using namespace ipsockets;
+
+int main() {
+
+    // Create a UDP server on port 8080
+    udp_socket_t<v4, socket_type_e::server> server;
+    
+    if (server.open("0.0.0.0:8080") != no_error) {
+
+        std::cout << "Server listening on port 8080\n";
+    
+        char buffer[1024];
+        addr4_t client;
+    
+        while (true) {
+            // Wait for client message
+            int bytes = server.recvfrom(buffer, sizeof(buffer), client);
+            if (bytes > 0) {
+                std::cout << "Received from " << client << ": " 
+                          << std::string(buffer, bytes) << '\n';
+            
+                // Reply to the same client
+                server.sendto("OK", 2, client);
+            }
         }
     }
 }
 ```
 
-### Simple TCP client
+### 4. TCP echo server in 20 lines
 
 ```cpp
 #include "tcp_socket.h"
-
-using client_t = tcp_socket_t<v4, socket_type_e::client>;
+using namespace ipsockets;
 
 int main() {
-    client_t client(client_t::log_e::info);
+    // Create a TCP server
+    tcp_socket_t<v4, socket_type_e::server> server;
+    
+    if (server.open("0.0.0.0:8080") != no_error) {
 
-    if (client.open("127.0.0.1:2000") != client_t::no_error) {
-        return 1;
+        std::cout << "TCP server listening on port 8080\n";
+    
+        while (true) {
+            addr4_t client_addr;
+        
+            // Accept incoming connection
+            auto client = server.accept(client_addr);
+            if (client.state != state_e::state_opened)
+                continue;
+        
+            std::cout << "Client connected: " << client_addr << '\n';
+        
+            // Communicate with client
+            char buffer[1024];
+            int bytes = client.recv(buffer, sizeof(buffer));
+            if (bytes > 0)
+                client.send(buffer, bytes);  // echo back
+        
+            client.close();  // close connection
+        }
     }
-
-    client.send("hello", 5);
-
-    char buffer[1024];
-    client.recv(buffer, sizeof(buffer));
 }
 ```
 
-## Design Goals
+## Why is this convenient? 🤔
 
-- Minimal abstraction overhead
-- Predictable performance
-- Explicit error handling
-- Unified API for IPv4 and IPv6
-- No hidden background threads
-- No dynamic allocations inside hot paths (where possible)
-- Easy to audit and embed
+### Instead of this (raw sockets):
+```cpp
+struct sockaddr_in addr;
+addr.sin_family = AF_INET;
+addr.sin_port = htons(8080);
+inet_pton(AF_INET, "192.168.1.100", &addr.sin_addr);
+// ... and 20 more lines to send a single packet
+```
 
-## Examples
+### Write this:
+```cpp
+sock.open("192.168.1.100:8080");  // done!
+sock.send("Hello", 5);
+```
 
-See the examples/ directory for full working examples:
+## Features 🔧
 
-- examples/ip.cpp
-- examples/udp_socket.cpp
-- examples/tcp_socket.cpp
+### IP Address Handling (`ip_address.h`)
+- Unified IPv4 and IPv6 support
+- String to binary and back conversion
+- Network prefixes and masks
+- IPv4-over-IPv6 mapping
+- Address + port as a single unit
 
-## License
+### UDP Sockets (`udp_socket.h`)
+- Client and server modes
+- Configurable timeouts
+- Polling-based asynchronous I/O
+- Clear states and error codes
 
-MIT (or your preferred license)
+### TCP Sockets (`tcp_socket.h`)
+- Blocking I/O with timeouts
+- Convenient accept with client socket creation
+- Automatic connection management
+- Consistent API with UDP
+
+## Requirements 📋
+
+- C++11 or newer
+- C++ standard library
+- Nothing else!
+
+## Project Integration 🛠️
+
+### Option 1 — Just copy the files
+```bash
+cp ip_address.h udp_socket.h tcp_socket.h /path/to/your/project/
+```
+
+### Option 2 — CMake
+```cmake
+add_subdirectory(ip-sockets-cpp-lite)
+target_link_libraries(your_app ip-sockets-cpp-lite)
+```
+
+## Examples 📚
+
+Check out the `examples/` directory for complete working examples:
+- `ip_address.cpp` - all IP address manipulation features
+- `udp_socket.cpp` - UDP client-server interaction
+- `tcp_socket.cpp` - TCP client-server interaction
+- `resolve_host.cpp` - resolving host to ipv4/ipv6 address example
+
+## License 📄
+
+MIT License - use it anywhere, even in commercial projects.
+
+---
+
+**ip-sockets-cpp-lite** - sockets that don't scare you. Try it, and you'll be amazed at how little code you need for network programming in C++! 🚀

@@ -5,6 +5,8 @@ using namespace ipsockets;
 
 int main () {
 
+  // IPv4
+
   uint8_t fragment[10] = {0xff,  0xc0, 0xa8, 0x02, 0x01,  0xff,0xff,0xff,0xff,0xff};
   ip4_t& ipv4ttt = *((ip4_t*)&fragment[1]);
   std::cout << ipv4ttt << '\n';
@@ -64,6 +66,8 @@ int main () {
   ip4_t result4_1 = ip4_t { 192, 168, 2, 1 }  & ip4_t { 255, 255, 0, 0 }; (void)result4_1;
   bool  result4_2 = ip4_t { 192, 168, 2, 1 } == ip4_t { 192, 168, 2, 1 }; (void)result4_2;
   bool  result4_3 = ip4_t { 192, 168, 2, 1 } == ip4_t { 192, 168, 2, 2 }; (void)result4_3;
+
+  // IPv6
 
   ip6_t ipv6_00; (void)ipv6_00;
   ip6_t ipv6_01 {};
