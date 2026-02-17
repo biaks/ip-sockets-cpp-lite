@@ -258,6 +258,7 @@ Check out the `examples/` directory for complete working examples:
 * `udp_socket.cpp` - UDP client-server interaction
 * `tcp_socket.cpp` - TCP client-server interaction
 * `resolve_host.cpp` - resolving host to ipv4/ipv6 address example
+* `http_server.cpp` - compact multi-page HTTP server
 
 ---
 

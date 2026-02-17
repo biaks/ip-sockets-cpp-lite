@@ -15,3 +15,6 @@ target_link_libraries(tcp_socket  ip-sockets-cpp-lite)
 
 add_executable       (resolve_host "resolve_host.cpp")
 target_link_libraries(resolve_host  ip-sockets-cpp-lite)
+
+add_executable       (http_server "http_server.cpp")
+target_link_libraries(http_server  ip-sockets-cpp-lite)
