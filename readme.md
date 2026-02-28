@@ -105,6 +105,8 @@ Keep it simple. Keep it portable.
 
 **Option 1 — Copy headers**
 
+from /include folder copy:
+
 * `ip_address.h`
 * `udp_socket.h`
 * `tcp_socket.h`
