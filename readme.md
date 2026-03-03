@@ -1,5 +1,5 @@
-```markdown
-# ip-sockets-cpp-lite 🔌
+
+# [ip-sockets-cpp-lite](https://github.com/biaks/ip-sockets-cpp-lite) 🔌
 
 [![Build examples](https://github.com/biaks/ip-sockets-cpp-lite/actions/workflows/cmake.yml/badge.svg)](https://github.com/biaks/ip-sockets-cpp-lite/actions/workflows/cmake.yml)
 [![Build multi-platform](https://github.com/biaks/ip-sockets-cpp-lite/actions/workflows/cmake-multi-platform.yml/badge.svg)](https://github.com/biaks/ip-sockets-cpp-lite/actions/workflows/cmake-multi-platform.yml)
