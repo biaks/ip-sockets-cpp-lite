@@ -18,4 +18,4 @@ add_example(udp_socket    ip-sockets-cpp-lite)
 add_example(tcp_socket    ip-sockets-cpp-lite)
 add_example(resolve_host  ip-sockets-cpp-lite)
 add_example(http_server   ip-sockets-cpp-lite)
-
+add_example(tcp_stream    ip-sockets-cpp-lite)
